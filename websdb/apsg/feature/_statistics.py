@@ -14,6 +14,14 @@ def vonMisesFisher(mu, kappa, num_samples):
     distribution around center mu in R^N with concentration kappa.
 
     Adopted from https://github.com/jasonlaska/spherecluster
+
+    Args:
+        mu: center direction
+        kappa: concentration parameter
+        num_samples: number of samples to generate
+
+    Returns:
+        ndarray: N samples from von Mises Fisher distribution.
     """
 
     def _sample_weight(kappa):
@@ -161,8 +169,7 @@ class KentDistribution(object):
         for gamma in (gamma1, gamma2, gamma3):
             assert len(gamma) == 3
 
-        self._cached_rvs = np.array([], dtype=np.float64)
-        self._cached_rvs.shape = (0, 3)
+        self._cached_rvs = np.array([], dtype=np.float64).reshape(0, 3)
 
     def __repr__(self):
         return "kent(%s, %s, %s, %s, %s)" % (
@@ -182,6 +189,9 @@ class KentDistribution(object):
         Returns the normalization constant of the Kent distribution.
         The proportional error may be expected not to be greater than
         1E-11.
+
+        Returns:
+            float: normalization constant of the Kent distribution.
         """
 
         (k, b) = (self.kappa, self.beta)
@@ -195,7 +205,6 @@ class KentDistribution(object):
                 result /= G(j + 1)
                 result *= G(j + 0.5)
             else:
-
                 while True:
                     a = np.exp(
                         np.log(b) * 2 * j + np.log(0.5 * k) * (-2 * j - 0.5)
@@ -217,6 +226,9 @@ class KentDistribution(object):
     def log_normalize(self, return_num_iterations=False):
         """
         Returns the logarithm of the normalization constant.
+
+        Returns:
+            float: logarithm of the normalization constant.
         """
 
         if return_num_iterations:
@@ -230,7 +242,10 @@ class KentDistribution(object):
 
     def log_pdf_max(self, normalize=True):
         """
-        Returns the maximum value of the log(pdf)
+        Returns the maximum value of the log(pdf).
+
+        Returns:
+            float: maximum value of the log(pdf).
         """
 
         if self.beta == 0.0:
@@ -250,6 +265,9 @@ class KentDistribution(object):
         Returns the pdf of the kent distribution for 3D vectors that
         are stored in xs which must be an array of N x 3 or N x M x 3
         N x M x P x 3 etc.
+
+        Returns:
+            ndarray: pdf of the kent distribution.
         """
 
         return np.exp(self.log_pdf(xs, normalize))
@@ -257,6 +275,9 @@ class KentDistribution(object):
     def log_pdf(self, xs, normalize=True):
         """
         Returns the log(pdf) of the kent distribution.
+
+        Returns:
+            ndarray: log(pdf) of the kent distribution.
         """
 
         axis = len(np.shape(xs)) - 1
@@ -274,6 +295,9 @@ class KentDistribution(object):
     def pdf_prime(self, xs, normalize=True):
         """
         Returns the derivative of the pdf with respect to kappa and beta.
+
+        Returns:
+            ndarray: derivative of the pdf with respect to kappa and beta.
         """
 
         return self.pdf(xs, normalize) * self.log_pdf_prime(xs, normalize)
@@ -281,6 +305,9 @@ class KentDistribution(object):
     def log_pdf_prime(self, xs, normalize=True):
         """
         Returns the derivative of the log(pdf) with respect to kappa and beta.
+
+        Returns:
+            ndarray: derivative of the log(pdf) with respect to kappa and beta.
         """
 
         axis = len(np.shape(xs)) - 1
@@ -300,6 +327,9 @@ class KentDistribution(object):
         """
         Returns the derivative of the normalization factor with respect
         to kappa and beta.
+
+        Returns:
+            ndarray: derivative of the normalization factor with respect to kappa and beta.
         """
 
         (k, b) = (self.kappa, self.beta)
@@ -368,6 +398,9 @@ class KentDistribution(object):
     def log_normalize_prime(self, return_num_iterations=False):
         """
         Returns the derivative of the logarithm of the normalization factor.
+
+        Returns:
+            ndarray: derivative of the logarithm of the normalization factor.
         """
 
         if return_num_iterations:
@@ -381,6 +414,9 @@ class KentDistribution(object):
     def log_likelihood(self, xs):
         """
         Returns the log likelihood for xs.
+
+        Returns:
+            float: log likelihood for xs.
         """
 
         retval = self.log_pdf(xs)
@@ -390,6 +426,9 @@ class KentDistribution(object):
         """
         Returns the derivative with respect to kappa and beta of the log
         likelihood for xs.
+
+        Returns:
+            ndarray: derivative with respect to kappa and beta of the log likelihood for xs.
         """
 
         retval = self.log_pdf_prime(xs)
@@ -414,6 +453,9 @@ class KentDistribution(object):
         The returned random samples are 3D unit vectors.
         If n_samples == None then a single sample x is returned with shape (3,)
         If n_samples is an integer value N then N samples are returned in an array with shape (N, 3)
+
+        Returns:
+            ndarray: random samples from the Kent distribution.
         """
 
         num_samples = 1 if n_samples is None else n_samples

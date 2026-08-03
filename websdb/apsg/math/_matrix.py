@@ -8,7 +8,7 @@ from apsg.math._vector import Vector2, Vector3
 
 
 class Matrix(ABC):
-    """Abstarct base class for Matrix2 and Matrix3"""
+    """Abstract base class for Matrix2 and Matrix3."""
 
     __slots__ = ("_coefs", "_attrs", "_cache")
     __shape__ = None
@@ -30,7 +30,7 @@ class Matrix(ABC):
 
     def __repr__(self):
         n = apsg_conf.ndigits
-        return f"{self.label()}\n{str(np.asarray(self._coefs).round(n))}"
+        return f"{self.label()}\n{str(np.asarray(self).round(n))}"
 
     def label(self):
         return self.__class__.__name__
@@ -46,7 +46,12 @@ class Matrix(ABC):
         }
 
     def __array__(self, dtype=None, copy=None):
-        return np.array(self._coefs, dtype=dtype)
+        if "array" not in self._cache:
+            self._cache["array"] = np.array(self._coefs)
+        cached = self._cache["array"]
+        if dtype is not None and np.dtype(dtype) != cached.dtype:
+            return cached.astype(dtype)
+        return cached
 
     def __nonzero__(self):
         return not np.allclose(self, np.zeros(self.__shape__))
@@ -67,12 +72,6 @@ class Matrix(ABC):
 
     __rmul__ = __mul__
 
-    def __div__(self, other):
-        return type(self)(np.divide(self, other))
-
-    def __rdiv__(self, other):
-        return type(self)(np.divide(other, self))
-
     def __floordiv__(self, other):
         return type(self)(np.floor_divide(self, other))
 
@@ -85,7 +84,7 @@ class Matrix(ABC):
     def __rtruediv__(self, other):
         return type(self)(np.true_divide(other, self))
 
-    pos__ = __copy__
+    __pos__ = __copy__
 
     def __getitem__(self, key):
         if isinstance(key, tuple):
@@ -96,11 +95,6 @@ class Matrix(ABC):
     def __iter__(self):
         # what we want to iterate?
         return iter(self._coefs)
-
-    def __mul__(self, other):
-        return type(self)(np.multiply(self, other))
-
-    __rmul__ = __mul__
 
     def __pow__(self, n):
         return type(self)(np.linalg.matrix_power(self, n))
@@ -120,22 +114,26 @@ class Matrix(ABC):
 
     @property
     def xx(self):
-        """Return xx-element of the matrix"""
+        """Return xx-element of the matrix."""
+
         return self._coefs[0][0]
 
     @property
     def xy(self):
-        """Return xy-element of the matrix"""
+        """Return xy-element of the matrix."""
+
         return self._coefs[0][1]
 
     @property
     def yx(self):
-        """Return yx-element of the matrix"""
+        """Return yx-element of the matrix."""
+
         return self._coefs[1][0]
 
     @property
     def yy(self):
-        """Return yy-element of the matrix"""
+        """Return yy-element of the matrix."""
+
         return self._coefs[1][1]
 
     @property
@@ -147,18 +145,14 @@ class Matrix(ABC):
         return type(self)(np.array(self).T)
 
     def transform(self, other):
-        """
-        Coordinate transformations of matrix
-
-        Using rotation matrix it returns ``A' = R * A * R . T``.
-        """
+        """Coordinate transformations of matrix."""
         other = self._ensure_same(other)
         return type(self)(other @ self @ other.T)
 
     @property
     def _eig(self):
         if "eig" not in self._cache:
-            evals, evecs = np.linalg.eig(np.asarray(self._coefs))
+            evals, evecs = np.linalg.eig(np.asarray(self))
             idx = evals.argsort()[::-1]
             evals = evals[idx]
             # round very small numbers to zero
@@ -168,12 +162,14 @@ class Matrix(ABC):
         return self._cache["eig"]
 
     def eigenvalues(self, which=None):
-        """Return eigenvalues
+        """Return eigenvalues.
 
         Args:
             which: if None returns sorted tuple of eigenvalues.
                 If int returns given eigenvalue. Default None.
 
+        Returns:
+            tuple or float: Eigenvalues of the matrix.
         """
         if which is None:
             return self._eig[0]
@@ -182,7 +178,7 @@ class Matrix(ABC):
 
     @property
     def det(self):
-        """Determinant"""
+        """Determinant."""
 
         return float(np.linalg.det(self))
 
@@ -199,7 +195,7 @@ class Matrix2(Matrix):
     Args:
         v: 2-dimensional array-like object
 
-    Example:
+    Examples:
         >>> matrix2()
         Matrix2
         [[1 0]
@@ -220,10 +216,10 @@ class Matrix2(Matrix):
         else:
             raise TypeError("Not valid arguments for Matrix2")
         self._coefs = tuple(coefs[0]), tuple(coefs[1])
-        if is_jsonable(kwargs):
+        if kwargs:
+            if not is_jsonable(kwargs):
+                raise TypeError("Provided attributes are not serializable.")
             self._attrs = kwargs
-        else:
-            raise TypeError("Provided attributes are not serializable.")
 
     @classmethod
     def from_comp(cls, **kwargs):
@@ -236,13 +232,15 @@ class Matrix2(Matrix):
             yx (float): tensor component M_yx
             yy (float): tensor component M_yy
 
-        Example:
+        Examples:
             >>> M = matrix2.from_comp(xy=2)
             >>> M
             Matrix2
             [[0. 2.]
              [0. 0.]]
 
+        Returns:
+            Matrix2: Matrix defined by individual components.
         """
         xx = kwargs.get("xx", 0)
         xy = kwargs.get("xy", 0)
@@ -272,25 +270,25 @@ class Matrix2(Matrix):
 
     @property
     def E1(self):
-        """First eigenvalue"""
+        """First eigenvalue."""
 
         return float(self.eigenvalues()[0])
 
     @property
     def E2(self):
-        """Second eigenvalue"""
+        """Second eigenvalue."""
 
         return float(self.eigenvalues()[1])
 
     @property
     def V1(self):
-        """First eigenvector"""
+        """First eigenvector."""
 
         return self.eigenvectors()[0]
 
     @property
     def V2(self):
-        """Second eigenvector"""
+        """Second eigenvector."""
 
         return self.eigenvectors()[1]
 
@@ -300,6 +298,9 @@ class Matrix2(Matrix):
         Args:
             which: if None returns sorted tuple of eigenvectors.
                 If int returns given eigenvector. Default None.
+
+        Returns:
+            tuple of Vector2 or Vector2: Eigenvectors of the matrix.
         """
         U = self._eig[1].T
         if which is None:
@@ -309,11 +310,14 @@ class Matrix2(Matrix):
 
     def scaled_eigenvectors(self, which=None):
         """Return eigenvectors with magnitudes of eigenvalues as
-        ``Vector2`` objects
+        ``Vector2`` objects.
 
         Args:
             which: if None returns sorted tuple of eigenvectors.
                 If int returns given eigenvector. Default None.
+
+        Returns:
+            tuple of Vector2 or Vector2: Eigenvectors scaled by eigenvalues.
         """
         U = self._eig[1].T
         if which is None:
@@ -337,7 +341,7 @@ class Matrix3(Matrix):
     Args:
         v: 2-dimensional array-like object
 
-    Example:
+    Examples:
         >>> matrix()
         Matrix3
         [[1 0 0]
@@ -359,10 +363,10 @@ class Matrix3(Matrix):
         else:
             raise TypeError("Not valid arguments for Matrix3")
         self._coefs = tuple(coefs[0]), tuple(coefs[1]), tuple(coefs[2])
-        if is_jsonable(kwargs):
+        if kwargs:
+            if not is_jsonable(kwargs):
+                raise TypeError("Provided attributes are not serializable.")
             self._attrs = kwargs
-        else:
-            raise TypeError("Provided attributes are not serializable.")
 
     @classmethod
     def from_comp(cls, **kwargs):
@@ -380,13 +384,15 @@ class Matrix3(Matrix):
             zy (float): tensor component M_zy
             zz (float): tensor component M_zz
 
-        Example:
+        Examples:
             >>> M = matrix.from_comp(xy=1, zy=-0.5)
             >>> M
             [[ 0.   1.   0. ]
              [ 0.   0.   0. ]
              [ 0.  -0.5  0. ]]
 
+        Returns:
+            Matrix3: Matrix defined by individual components.
         """
         xx = kwargs.get("xx", 0)
         xy = kwargs.get("xy", 0)
@@ -421,62 +427,67 @@ class Matrix3(Matrix):
 
     @property
     def xz(self):
-        """Return xz-element of the matrix"""
+        """Return xz-element of the matrix."""
+
         return self._coefs[0][2]
 
     @property
     def yz(self):
-        """Return yz-element of the matrix"""
+        """Return yz-element of the matrix."""
+
         return self._coefs[1][2]
 
     @property
     def zx(self):
-        """Return zx-element of the matrix"""
+        """Return zx-element of the matrix."""
+
         return self._coefs[2][0]
 
     @property
     def zy(self):
-        """Return zy-element of the matrix"""
+        """Return zy-element of the matrix."""
+
         return self._coefs[2][1]
 
     @property
     def zz(self):
-        """Return zz-element of the matrix"""
+        """Return zz-element of the matrix."""
+
         return self._coefs[2][2]
 
     @property
     def E1(self):
-        """First eigenvalue"""
+        """First eigenvalue."""
 
         return float(self.eigenvalues(0))
 
     @property
     def E2(self):
-        """Second eigenvalue"""
+        """Second eigenvalue."""
 
         return float(self.eigenvalues(1))
 
     @property
     def E3(self):
-        """Third eigenvalue"""
+        """Third eigenvalue."""
 
         return float(self.eigenvalues(2))
 
     @property
     def V1(self):
-        """First eigenvector"""
+        """First eigenvector."""
 
         return self.eigenvectors(0)
 
     @property
     def V2(self):
-        """Second eigenvector"""
+        """Second eigenvector."""
 
         return self.eigenvectors(1)
 
     @property
     def V3(self):
-        """Third eigenvector"""
+        """Third eigenvector."""
 
         return self.eigenvectors(2)
 
@@ -486,6 +497,9 @@ class Matrix3(Matrix):
         Args:
             which: if None returns sorted tuple of eigenvectors.
                 If int returns given eigenvalue. Default None.
+
+        Returns:
+            tuple of Vector3 or Vector3: Eigenvectors of the matrix.
         """
         U = self._eig[1].T
         if which is None:
@@ -495,11 +509,14 @@ class Matrix3(Matrix):
 
     def scaled_eigenvectors(self, which=None):
         """Return eigenvectors with magnitudes of eigenvalues as
-        ``Vector3`` objects
+        ``Vector3`` objects.
 
         Args:
             which: if None returns sorted tuple of eigenvectors.
                 If int returns given eigenvector. Default None.
+
+        Returns:
+            tuple of Vector3 or Vector3: Eigenvectors scaled by eigenvalues.
         """
         U = self._eig[1].T
         if which is None:

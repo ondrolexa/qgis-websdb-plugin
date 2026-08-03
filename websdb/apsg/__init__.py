@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from apsg.config import apsg_conf
+from apsg.config import apsg_conf, apsg_conf_context
 from apsg.feature import (
     ClusterSet as cluster,
 )
@@ -111,6 +111,9 @@ from apsg.math import (
     Vector3 as vec,
 )
 from apsg.plotting import (
+    FabricPlotStyleFactory as fabricplot_styles,
+)
+from apsg.plotting import (
     FlinnPlot,
     HsuPlot,
     RamsayPlot,
@@ -121,10 +124,7 @@ from apsg.plotting import (
     quicknet,
 )
 from apsg.plotting import (
-    StereoNetStyleFactory as fabricplot_styles,
-)
-from apsg.plotting import (
-    StereoNetStyleFactory as roseplot_styles,
+    RosePlotStyleFactory as roseplot_styles,
 )
 from apsg.plotting import (
     StereoNetStyleFactory as stereonet_styles,
@@ -132,6 +132,7 @@ from apsg.plotting import (
 
 __all__ = (
     "apsg_conf",
+    "apsg_conf_context",
     "stereonet_styles",
     "roseplot_styles",
     "fabricplot_styles",
@@ -182,6 +183,6 @@ __all__ = (
     "quicknet",
 )
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 __author__ = "Ondrej Lexa"
 __email__ = "lexa.ondrej@gmail.com"

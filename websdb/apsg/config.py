@@ -5,23 +5,30 @@ from typing import Any
 
 
 class BaseConfig(Mapping):
+    """Base configuration class with dict-like access."""
+
     def __getitem__(self, key: str) -> Any:
+        """Get item by key."""
         try:
             return getattr(self, key)
         except AttributeError:
             raise KeyError(key)
 
     def __iter__(self):
+        """Iterate over configuration keys."""
         return iter(asdict(self))
 
     def __len__(self):
+        """Return number of configuration items."""
         return len(asdict(self))
 
     def __repr__(self):
+        """Return string representation."""
         items = ", ".join(f"{k}={v!r}" for k, v in asdict(self).items())
         return f"{self.__class__.__name__}({items})"
 
     def update(self, config_dict: dict[str, Any]):
+        """Update configuration with given mapping."""
         for key, value in config_dict.items():
             if not hasattr(self, key):
                 raise KeyError(f"'{key}' is not a valid configuration key.")
@@ -32,11 +39,14 @@ class BaseConfig(Mapping):
                 setattr(self, key, value)
 
     def copy(self) -> dict[str, Any]:
+        """Return a copy as a dictionary."""
         return asdict(self)
 
 
 @dataclass
 class StereonetMarkerConfig(BaseConfig):
+    """Stereonet marker style configuration."""
+
     alpha: Any = None
     color: Any = None
     mec: Any = None
@@ -49,6 +59,8 @@ class StereonetMarkerConfig(BaseConfig):
 
 @dataclass
 class StereonetConfig(BaseConfig):
+    """Stereonet global configuration."""
+
     kind: str = "equal-area"
     overlay_position: tuple[float, float, float, float] = (0, 0, 0, 0)
     rotate_data: bool = False
@@ -67,16 +79,22 @@ class StereonetConfig(BaseConfig):
 
 @dataclass
 class StereonetPointConfig(StereonetMarkerConfig):
+    """Stereonet point marker style configuration."""
+
     pass
 
 
 @dataclass
 class StereonetVectorConfig(StereonetMarkerConfig):
+    """Stereonet vector marker style configuration."""
+
     mew: int = 2
 
 
 @dataclass
 class StereonetGreatCircleConfig(BaseConfig):
+    """Stereonet great circle line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -85,6 +103,8 @@ class StereonetGreatCircleConfig(BaseConfig):
 
 @dataclass
 class StereonetArcConfig(BaseConfig):
+    """Stereonet arc line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -93,6 +113,8 @@ class StereonetArcConfig(BaseConfig):
 
 @dataclass
 class StereonetScatterConfig(BaseConfig):
+    """Stereonet scatter plot configuration."""
+
     alpha: Any = None
     s: Any = None
     c: Any = None
@@ -105,6 +127,8 @@ class StereonetScatterConfig(BaseConfig):
 
 @dataclass
 class StereonetConeConfig(BaseConfig):
+    """Stereonet cone boundary line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -112,7 +136,23 @@ class StereonetConeConfig(BaseConfig):
 
 
 @dataclass
+class StereonetConfidenceConfig(BaseConfig):
+    """Stereonet confidence cone/ellipse style configuration."""
+
+    method: str = "fisher"
+    which: int = 0
+    level: float = 0.95
+    n_resamples: int = 1000
+    alpha: Any = None
+    color: Any = None
+    ls: str = "--"
+    lw: float = 1.5
+
+
+@dataclass
 class StereonetPairConfig(BaseConfig):
+    """Stereonet pair line and marker style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -122,6 +162,8 @@ class StereonetPairConfig(BaseConfig):
 
 @dataclass
 class StereonetFaultConfig(BaseConfig):
+    """Stereonet fault plane line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -130,11 +172,15 @@ class StereonetFaultConfig(BaseConfig):
 
 @dataclass
 class StereonetHoeppnerConfig(StereonetMarkerConfig):
+    """Stereonet Hoeppner plot marker style configuration."""
+
     ms: int = 5
 
 
 @dataclass
 class StereonetArrowConfig(BaseConfig):
+    """Stereonet arrow style configuration."""
+
     color: Any = None
     width: int = 2
     headwidth: int = 5
@@ -144,6 +190,8 @@ class StereonetArrowConfig(BaseConfig):
 
 @dataclass
 class StereonetTensorConfig(BaseConfig):
+    """Stereonet tensor plot style configuration."""
+
     planes: bool = True
     alpha: Any = None
     color: Any = None
@@ -156,6 +204,8 @@ class StereonetTensorConfig(BaseConfig):
 
 @dataclass
 class StereonetStressConfig(BaseConfig):
+    """Stereonet stress axes marker style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "none"
@@ -166,10 +216,12 @@ class StereonetStressConfig(BaseConfig):
 
 @dataclass
 class StereonetContourConfig(BaseConfig):
+    """Stereonet contour plot configuration."""
+
     alpha: Any = None
     antialiased: bool = True
     method: str = "sph"
-    n_max: int = 6
+    n_max: int = 10
     cmap: str = "Greys"
     levels: int = 6
     clines: bool = True
@@ -185,6 +237,8 @@ class StereonetContourConfig(BaseConfig):
 
 @dataclass
 class RoseplotConfig(BaseConfig):
+    """Rose plot global configuration."""
+
     bins: int = 36
     density: bool = True
     arrowness: float = 0.95
@@ -201,6 +255,8 @@ class RoseplotConfig(BaseConfig):
 
 @dataclass
 class RoseplotBarConfig(BaseConfig):
+    """Rose plot bar style configuration."""
+
     alpha: Any = None
     color: Any = None
     ec: Any = None
@@ -212,6 +268,8 @@ class RoseplotBarConfig(BaseConfig):
 
 @dataclass
 class RoseplotPdfConfig(BaseConfig):
+    """Rose plot PDF line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ec: Any = None
@@ -223,6 +281,8 @@ class RoseplotPdfConfig(BaseConfig):
 
 @dataclass
 class RoseplotMuciConfig(BaseConfig):
+    """Rose plot confidence interval line style configuration."""
+
     confidence_level: int = 95
     alpha: Any = None
     color: str = "r"
@@ -233,6 +293,8 @@ class RoseplotMuciConfig(BaseConfig):
 
 @dataclass
 class FabricplotConfig(BaseConfig):
+    """Fabric plot global configuration."""
+
     ticks: bool = True
     n_ticks: int = 10
     tick_size: float = 0.2
@@ -247,6 +309,8 @@ class FabricplotConfig(BaseConfig):
 
 @dataclass
 class FabricplotPointConfig(BaseConfig):
+    """Fabric plot point marker style configuration."""
+
     alpha: Any = None
     color: Any = None
     mec: Any = None
@@ -259,6 +323,8 @@ class FabricplotPointConfig(BaseConfig):
 
 @dataclass
 class FabricplotPathConfig(BaseConfig):
+    """Fabric plot path line style configuration."""
+
     alpha: Any = None
     color: Any = None
     ls: str = "-"
@@ -272,6 +338,8 @@ class FabricplotPathConfig(BaseConfig):
 
 @dataclass
 class AppConfig(BaseConfig):
+    """Top-level application configuration."""
+
     notation: str = "dd"
     vec2geo: bool = False
     ndigits: int = 3
@@ -291,6 +359,9 @@ class AppConfig(BaseConfig):
         default_factory=StereonetScatterConfig
     )
     stereonet_cone: StereonetConeConfig = field(default_factory=StereonetConeConfig)
+    stereonet_confidence: StereonetConfidenceConfig = field(
+        default_factory=StereonetConfidenceConfig
+    )
     stereonet_pair: StereonetPairConfig = field(default_factory=StereonetPairConfig)
     stereonet_fault: StereonetFaultConfig = field(default_factory=StereonetFaultConfig)
     stereonet_hoeppner: StereonetHoeppnerConfig = field(
@@ -322,6 +393,7 @@ apsg_conf = AppConfig()
 
 @contextmanager
 def apsg_conf_context(**kwargs):
+    """Context manager to temporarily override configuration."""
     saved = apsg_conf.copy()
     apsg_conf.update(kwargs)
     try:
