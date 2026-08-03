@@ -1,0 +1,26 @@
+[general]
+name=WebSDB
+description=Read structural geology data from a WebSDB server into QGIS
+category=Database
+hasProcessingProvider=False
+about=WebSDB is a plugin to log in to a WebSDB server, read structural geology data from a project over its REST API, and plot it on the map or stereonet.
+icon=resources/images/icon_sdb.png
+tags=geology, structural data, REST API
+
+# credits and contact
+author=Ondrej LEXA
+email=lexa.ondrej@gmail.com
+homepage=https://github.com/ondrolexa/qgis-websdb-plugin
+repository=https://github.com/ondrolexa/qgis-websdb-plugin
+tracker=https://github.com/ondrolexa/qgis-websdb-plugin/issues/
+
+# QGIS context
+deprecated=False
+experimental=True
+plugin_dependencies=scipy
+qgisMinimumVersion=3.40
+qgisMaximumVersion=4.99
+
+# versioning
+version=1.0.0
+changelog=
