@@ -67,10 +67,12 @@ from websdb.data_mapping import (
     group_by_datatype,
     resolve_rock_map,
 )
+from websdb.grid_average import bounding_box, interpolate_grid, preset_grid_size
 from websdb.toolbelt import PlgLogger
 from websdb.toolbelt.api_client import ApiClient
 
 # Import the code for the dialog
+from .websdb_average import WebSDBAverageDialog
 from .websdb_import import WebSDBImportLayer
 from .websdb_open import WebSDBOpenDialog
 from .websdb_options import WebSDBOptionsDialog
@@ -99,6 +101,16 @@ site_fields = {
     "id": QVariant.Int,
     "name": QVariant.String,
     "description": QVariant.String,
+}
+
+grid_fields = {
+    "azi": QVariant.Double,
+    "inc": QVariant.Double,
+    "planar": QVariant.Int,
+    "rotate": QVariant.Double,
+    "label": QVariant.String,
+    "lbloff": QVariant.String,
+    "weight": QVariant.Double,
 }
 
 
@@ -219,6 +231,7 @@ class WebSDBPlugin:
         self.options_dlg = WebSDBOptionsDialog(self)
         self.structures_dlg = WebSDBStructuresDialog(self)
         self.plot_dlg = WebSDBPlotDialog(self)
+        self.average_dlg = WebSDBAverageDialog(self)
 
         # logging
         self.log = QgsApplication.messageLog()
@@ -433,6 +446,14 @@ class WebSDBPlugin:
             parent=self.iface.mainWindow(),
         )
 
+        icon_path = "icons:icon_avg.png"
+        self.add_action(
+            icon_path,
+            text=self.tr("Interpolate on grid..."),
+            callback=self.interpolate_on_grid,
+            parent=self.iface.mainWindow(),
+        )
+
         # Nothing is connected yet at startup - only Connect (index 0) stays
         # enabled so the user can log in; everything after it requires an
         # active project connection.
@@ -576,9 +597,11 @@ class WebSDBPlugin:
         # Run the dialog event loop
         self.options_dlg.exec()
 
-    def create_layer(self, name, fields):
-        """Create temporary point layer (websdb-app coordinates are always WGS84)"""
-        crs = QgsCoordinateReferenceSystem.fromEpsgId(4326)
+    def create_layer(self, name, fields, crs=None):
+        """Create temporary point layer (defaults to WGS84 if no crs given, since
+        websdb-app coordinates are always WGS84 on the wire)"""
+        if crs is None:
+            crs = QgsCoordinateReferenceSystem.fromEpsgId(4326)
         lyr_fields = QgsFields()
         for key in fields:
             lyr_fields.append(QgsField(key, fields[key]))
@@ -600,7 +623,11 @@ class WebSDBPlugin:
                 self._handle_api_error(err)
                 return
 
-            layer = self.create_layer("Sites", site_fields)
+            crsSrc = QgsCoordinateReferenceSystem.fromEpsgId(4326)
+            crsDst = QgsProject.instance().crs()
+            xform = QgsCoordinateTransform(crsSrc, crsDst, QgsProject.instance())
+
+            layer = self.create_layer("Sites", site_fields, crs=crsDst)
             provider = layer.dataProvider()
             layer.startEditing()
             skipped = 0
@@ -609,9 +636,11 @@ class WebSDBPlugin:
                     skipped += 1
                     continue
                 feature = QgsFeature()
-                feature.setGeometry(
-                    QgsGeometry.fromPointXY(QgsPointXY(site["lon"], site["lat"]))
+                point = QgsPointXY(site["lon"], site["lat"])
+                point_canvas = xform.transform(
+                    point, QgsCoordinateTransform.ForwardTransform
                 )
+                feature.setGeometry(QgsGeometry.fromPointXY(point_canvas))
                 feature.setAttributes(
                     [site["id"], site["name"], self.sanitize(site.get("description"))]
                 )
@@ -743,10 +772,11 @@ class WebSDBPlugin:
             if average:
                 layer_name += " " + self.tr("averaged")
 
-            layer = self.create_layer(layer_name, structure_fields)
+            layer = self.create_layer(layer_name, structure_fields, crs=crsDst)
             provider = layer.dataProvider()
             layer.startEditing()
             layer._is_planar = is_planar
+            layer._averaged = average
 
             off_coef = (
                 1.0 if is_planar else self.settings.value("linmulti", type=float)
@@ -805,11 +835,12 @@ class WebSDBPlugin:
                     continue
                 feature = QgsFeature()
                 point = QgsPointXY(site["lon"], site["lat"])
-                feature.setGeometry(QgsGeometry.fromPointXY(point))
-                # do possible azimuth corrections in canvas crs
+                # reproject into the project crs - this layer's crs is now the
+                # project crs, and azimuth corrections are also evaluated at this point
                 point_canvas = xform.transform(
                     point, QgsCoordinateTransform.ForwardTransform
                 )
+                feature.setGeometry(QgsGeometry.fromPointXY(point_canvas))
                 delta = 0
                 delta += (
                     self.calc_gc(point=point_canvas)
@@ -957,3 +988,124 @@ class WebSDBPlugin:
             self.plot_dlg.plotnet()
             # Run the dialog event loop
             self.plot_dlg.exec()
+
+    def interpolate_on_grid(self):
+        """Spatially interpolate a per-site-averaged structures layer onto a
+        regular grid, weighted by Gaussian distance."""
+        src = None
+        for layer in self.iface.layerTreeView().selectedLayers():
+            if hasattr(layer, "_is_planar") and getattr(layer, "_averaged", False):
+                src = layer
+                break
+        if src is None:
+            self.bar.pushWarning(
+                "WebSDB",
+                self.tr(
+                    "Select a structures layer created with 'Average data per "
+                    "site' checked."
+                ),
+            )
+            return
+        if src.crs().isGeographic():
+            self.bar.pushWarning(
+                "WebSDB",
+                self.tr(
+                    "Layer CRS must be projected (e.g. UTM), not geographic, "
+                    "for spatial averaging."
+                ),
+            )
+            return
+
+        is_planar = src._is_planar
+        features = (
+            list(src.getSelectedFeatures())
+            if src.selectedFeatureCount()
+            else list(src.getFeatures())
+        )
+        points = [
+            (f.geometry().asPoint().x(), f.geometry().asPoint().y(), f["azi"], f["inc"])
+            for f in features
+        ]
+        if not points:
+            self.bar.pushWarning("WebSDB", self.tr("No features to interpolate."))
+            return
+
+        xmin, xmax, ymin, ymax = bounding_box([(p[0], p[1]) for p in points])
+        preset = preset_grid_size(xmin, xmax, ymin, ymax)
+        self.average_dlg.gridSize.setValue(int(round(preset)))
+        if not self.average_dlg.exec():
+            return
+        grid_size = self.average_dlg.gridSize.value()
+        weigth_limit = self.average_dlg.weigthLimit.value()
+
+        QgsApplication.instance().setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        results = interpolate_grid(points, is_planar, grid_size, weigth_limit)
+        if not results:
+            restore_cursor()
+            self.bar.pushSuccess(
+                "WebSDB", self.tr("No grid point met the weight threshold.")
+            )
+            return
+
+        layer = self.create_layer(f"{src.name()} - grid", grid_fields, crs=src.crs())
+        provider = layer.dataProvider()
+        layer.startEditing()
+        layer._is_planar = is_planar
+        layer._averaged = True
+
+        crsSrc, crsDst = src.crs(), QgsProject.instance().crs()
+        xform = QgsCoordinateTransform(crsSrc, crsDst, QgsProject.instance())
+        md_time = self._measured_date()
+        off_coef = 1.0 if is_planar else self.settings.value("linmulti", type=float)
+
+        for rec in results:
+            point = QgsPointXY(rec["x"], rec["y"])
+            point_canvas = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
+            delta = (
+                self.calc_gc(point=point_canvas)
+                if self.settings.value("auto_gc", type=bool)
+                else self.settings.value("angle_gc", type=float)
+            )
+            delta += (
+                self.calc_md(point=point_canvas, time=md_time)
+                if self.settings.value("auto_md", type=bool)
+                else self.settings.value("angle_md", type=float)
+            )
+            rotation_deg = rec["azi"] + delta
+            offx = (
+                off_coef
+                * self.settings.value("offset", type=float)
+                * sin(rotation_deg * pi / 180.0)
+            )
+            offy = (
+                -off_coef
+                * self.settings.value("offset", type=float)
+                * cos(rotation_deg * pi / 180.0)
+            )
+
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPointXY(point))
+            feature.setAttributes(
+                [
+                    rec["azi"],
+                    rec["inc"],
+                    1 if is_planar else 0,
+                    rotation_deg,
+                    str(int(round(rec["inc"]))),
+                    "{},{}".format(offx, offy),
+                    rec["weight"],
+                ]
+            )
+            provider.addFeatures([feature])
+
+        layer.commitChanges()
+        layer.loadNamedStyle(
+            self.res_path("styles/planar.qml" if is_planar else "styles/linear.qml")
+        )
+        layer.triggerRepaint()
+        QgsProject.instance().addMapLayer(layer)
+        restore_cursor()
+        self.bar.pushSuccess(
+            "WebSDB",
+            "{} ".format(layer.featureCount()) + self.tr("grid points interpolated"),
+        )
