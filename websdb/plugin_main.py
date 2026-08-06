@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # ----------------------------------------------------------
 # WebSDB QGIS Plugin
 # Copyright (C) 2026 Ondrej Lexa
@@ -12,10 +10,10 @@
 # (at your option) any later version.
 # --------------------------------------------------------------------
 
+import datetime
 import json
 import os
 import sys
-from datetime import date, datetime
 from math import cos, pi, sin
 from pathlib import Path
 
@@ -182,19 +180,6 @@ class WebSDBPlugin:
             if websdb_svg_path not in svg_paths:
                 svg_paths.append(websdb_svg_path)
                 QgsSettings().setValue("svg/searchPathsForSVG", svg_paths)
-        # initialize locale
-        if QSettings().value("locale/userLocale"):
-            locale = QSettings().value("locale/userLocale")[0:2]
-            locale_path = os.path.join(
-                self.plugin_dir, "i18n", "WebSDB_{}.qm".format(locale)
-            )
-
-            if os.path.exists(locale_path):
-                self.translator = QTranslator()
-                self.translator.load(locale_path)
-
-                if qVersion() > "4.3.3":
-                    QCoreApplication.installTranslator(self.translator)
 
         # Get the params from last session.
         self.settings = QSettings("LX", "websdb")
@@ -474,10 +459,9 @@ class WebSDBPlugin:
             os.path.dirname(os.path.realpath(__file__)), "svg"
         )
         svg_paths = QgsSettings().value("svg/searchPathsForSVG")
-        if svg_paths:
-            if websdb_svg_path in svg_paths:
-                svg_paths.remove(websdb_svg_path)
-                QgsSettings().setValue("svg/searchPathsForSVG", svg_paths)
+        if svg_paths and websdb_svg_path in svg_paths:
+            svg_paths.remove(websdb_svg_path)
+            QgsSettings().setValue("svg/searchPathsForSVG", svg_paths)
 
     def calc_gc(self, point=None):
         """Calculate Grid convergence for project CRS"""
@@ -503,7 +487,7 @@ class WebSDBPlugin:
             gc = point_north.azimuth(point)
         return gc
 
-    def calc_md(self, point=None, time=date.today()):
+    def calc_md(self, point=None, time=None):
         """Calculate magnetic declination uising Christopher Weiss geomag library.
 
         Adapted from the geomagc software and World Magnetic Model of the NOAA
@@ -517,7 +501,8 @@ class WebSDBPlugin:
         if point is None:
             point = self.iface.mapCanvas().extent().center()
         point_ll = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
-
+        if time is None:
+            time = datetime.datetime.now(datetime.UTC).date()
         mag = GM.GeoMag(point_ll.y(), point_ll.x(), time=time)
         return mag.dec
 
@@ -544,10 +529,14 @@ class WebSDBPlugin:
         value = data.get(self._measured_date_key())
         if value:
             try:
-                return datetime.strptime(value, "%d.%m.%Y %H:%M").date()
+                return (
+                    datetime.datetime.strptime(value, "%d.%m.%Y %H:%M")
+                    .astimezone()
+                    .date()
+                )
             except ValueError:
                 pass
-        return date.today()
+        return datetime.datetime.now(datetime.UTC).date()
 
     def set_measured_date(self, dt_str):
         raw = self.settings.value("measured_dates", "", type=str)
@@ -657,13 +646,11 @@ class WebSDBPlugin:
             restore_cursor()
 
             if layer.featureCount() > 0:
-                message = "{} ".format(layer.featureCount()) + self.tr(
+                message = f"{layer.featureCount()} " + self.tr(
                     "sites read successfully"
                 )
                 if skipped:
-                    message += " ({} {})".format(
-                        skipped, self.tr("skipped, missing coordinates")
-                    )
+                    message += f" ({skipped} {self.tr('skipped, missing coordinates')})"
                 self.bar.pushSuccess("WebSDB", message)
             else:
                 self.bar.pushWarning(
@@ -693,7 +680,9 @@ class WebSDBPlugin:
         self.structures_dlg.comboStructure.clear()
         self.structures_dlg.comboStructure.addItem(self.tr("Any"), None)
         for structype in structypes:
-            self.structures_dlg.comboStructure.addItem(structype["name"], structype["id"])
+            self.structures_dlg.comboStructure.addItem(
+                structype["name"], structype["id"]
+            )
         self.structures_dlg.comboUnit.clear()
         self.structures_dlg.comboUnit.addItem(self.tr("Any"), None)
         for unit in units:
@@ -715,7 +704,9 @@ class WebSDBPlugin:
             structype_id = self.structures_dlg.comboStructure.currentData()
             unit_id = self.structures_dlg.comboUnit.currentData()
             datatype = (
-                "Foliation" if self.structures_dlg.radioFoliation.isChecked() else "Lineation"
+                "Foliation"
+                if self.structures_dlg.radioFoliation.isChecked()
+                else "Lineation"
             )
             selected_tags = [
                 item.text() for item in self.structures_dlg.listTags.selectedItems()
@@ -725,11 +716,15 @@ class WebSDBPlugin:
             rock_map = resolve_rock_map(rocks)
             sites = self.api.list_sites(self.project_id)
             site_map = {site["id"]: site for site in sites}
-            geodata_rows = self.api.list_geodata(self.project_id, structype_id=structype_id)
+            geodata_rows = self.api.list_geodata(
+                self.project_id, structype_id=structype_id
+            )
 
             site_ids = None
             if selected_enable and self.structures_dlg.checkSelected.isChecked():
-                selected_names = {f["name"] for f in self.sites_layer.selectedFeatures()}
+                selected_names = {
+                    f["name"] for f in self.sites_layer.selectedFeatures()
+                }
                 site_ids = {
                     sid for sid, s in site_map.items() if s["name"] in selected_names
                 }
@@ -756,7 +751,9 @@ class WebSDBPlugin:
 
         unit_names = {unit["id"]: unit["name"] for unit in units}
         structype_names = {st["id"]: st["name"] for st in structypes}
-        group_label = structype_names.get(structype_id) if structype_id else self.tr("Any")
+        group_label = (
+            structype_names.get(structype_id) if structype_id else self.tr("Any")
+        )
 
         # geometry/rotation math: websdb-app sites are always WGS84
         crsSrc = QgsCoordinateReferenceSystem.fromEpsgId(4326)
@@ -778,9 +775,7 @@ class WebSDBPlugin:
             layer._is_planar = is_planar
             layer._averaged = average
 
-            off_coef = (
-                1.0 if is_planar else self.settings.value("linmulti", type=float)
-            )
+            off_coef = 1.0 if is_planar else self.settings.value("linmulti", type=float)
 
             by_site = {}
             for row in group_rows:
@@ -807,8 +802,10 @@ class WebSDBPlugin:
                             "unit": unit_names.get(first["unit_id"], ""),
                             "structype": structype_names.get(first["structype_id"], ""),
                             "tags": "",
-                            "description": self.tr("Averaged from {} data").format(
-                                len(site_rows)
+                            "description": (
+                                f"Averaged from {len(site_rows)} data"
+                                if len(site_rows) > 1
+                                else None
                             ),
                             "pair_id": None,
                         }
@@ -874,8 +871,8 @@ class WebSDBPlugin:
                     rec["description"],
                     1 if is_planar else 0,
                     rotation,
-                    int(round(rec["inclination"])),
-                    "{},{}".format(offx, offy),
+                    round(float(rec["inclination"])),
+                    f"{offx},{offy}",
                     rec["rock"],
                     rec["pair_id"],
                 ]
@@ -895,8 +892,7 @@ class WebSDBPlugin:
                 QgsProject.instance().addMapLayer(layer)
                 self.bar.pushSuccess(
                     "WebSDB",
-                    "{} ".format(layer.featureCount())
-                    + self.tr("structures read successfully"),
+                    "{layer.featureCount()} " + self.tr("structures read successfully"),
                 )
 
         restore_cursor()
@@ -913,7 +909,9 @@ class WebSDBPlugin:
         features = []
         for feature in layer.getFeatures():
             point = feature.geometry().asPoint()
-            point_wgs84 = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
+            point_wgs84 = xform.transform(
+                point, QgsCoordinateTransform.ForwardTransform
+            )
             name = str(feature[site_field])
             desc = self.sanitize(str(feature[desc_field])) if desc_field else ""
             features.append(
@@ -939,7 +937,9 @@ class WebSDBPlugin:
             desc_field = dlg.descCombo.currentField()
             update_mode = dlg.radioUpdate.isChecked()
 
-            feature_collection = self._build_sites_geojson(layer, site_field, desc_field)
+            feature_collection = self._build_sites_geojson(
+                layer, site_field, desc_field
+            )
             description_field = "description" if desc_field else ""
 
             self.api.import_sites_geojson(
@@ -954,9 +954,11 @@ class WebSDBPlugin:
             restore_cursor()
             self.bar.pushSuccess(
                 "WebSDB",
-                self.tr("Existing sites successfully updated")
-                if update_mode
-                else self.tr("New sites successfully created"),
+                (
+                    self.tr("Existing sites successfully updated")
+                    if update_mode
+                    else self.tr("New sites successfully created")
+                ),
             )
         except (ApiAuthError, ApiConnectionError, ApiError) as err:
             restore_cursor()
@@ -1032,7 +1034,7 @@ class WebSDBPlugin:
 
         xmin, xmax, ymin, ymax = bounding_box([(p[0], p[1]) for p in points])
         preset = preset_grid_size(xmin, xmax, ymin, ymax)
-        self.average_dlg.gridSize.setValue(int(round(preset)))
+        self.average_dlg.gridSize.setValue(round(preset))
         if not self.average_dlg.exec():
             return
         grid_size = self.average_dlg.gridSize.value()
@@ -1060,7 +1062,9 @@ class WebSDBPlugin:
 
         for rec in results:
             point = QgsPointXY(rec["x"], rec["y"])
-            point_canvas = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
+            point_canvas = xform.transform(
+                point, QgsCoordinateTransform.ForwardTransform
+            )
             delta = (
                 self.calc_gc(point=point_canvas)
                 if self.settings.value("auto_gc", type=bool)
@@ -1091,8 +1095,8 @@ class WebSDBPlugin:
                     rec["inc"],
                     1 if is_planar else 0,
                     rotation_deg,
-                    str(int(round(rec["inc"]))),
-                    "{},{}".format(offx, offy),
+                    str(round(float(rec["inc"]))),
+                    f"{offx},{offy}",
                     rec["weight"],
                 ]
             )
@@ -1107,5 +1111,5 @@ class WebSDBPlugin:
         restore_cursor()
         self.bar.pushSuccess(
             "WebSDB",
-            "{} ".format(layer.featureCount()) + self.tr("grid points interpolated"),
+            "{layer.featureCount()} " + self.tr("grid points interpolated"),
         )
