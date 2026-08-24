@@ -226,6 +226,15 @@ class WebSDBPlugin:
         self.dbok = False
         self.sites_layer = None
 
+    def _set_gated_actions_enabled(self, enabled):
+        """Enable/disable every action that requires an active websdb
+        connection - i.e. all actions except Connect (index 0) and Options,
+        which only edits local QSettings and never touches the API."""
+        for ac in self.actions[1:]:
+            if ac is self.action_options:
+                continue
+            ac.setEnabled(enabled)
+
     def check_connection(self):
         """Validate the stored session/project and enable actions accordingly."""
         try:
@@ -241,20 +250,17 @@ class WebSDBPlugin:
             self.dbok = False
             self.settings.setValue("token", "")
             self.api.token = None
-            for ac in self.actions[1:]:
-                ac.setDisabled(True)
+            self._set_gated_actions_enabled(False)
             self.bar.pushWarning(
                 "WebSDB", self.tr("Session expired, please connect again")
             )
         except ApiConnectionError:
             self.dbok = False
-            for ac in self.actions[1:]:
-                ac.setDisabled(True)
+            self._set_gated_actions_enabled(False)
             self.bar.pushWarning("WebSDB", self.tr("Cannot reach server"))
         except (ApiError, ValueError):
             self.dbok = False
-            for ac in self.actions[1:]:
-                ac.setDisabled(True)
+            self._set_gated_actions_enabled(False)
             self.bar.pushWarning("WebSDB", self.tr("Not connected to a project"))
 
     def _handle_api_error(self, err):
@@ -264,8 +270,7 @@ class WebSDBPlugin:
             self.settings.setValue("token", "")
             self.api.token = None
             self.dbok = False
-            for ac in self.actions[1:]:
-                ac.setDisabled(True)
+            self._set_gated_actions_enabled(False)
             self.bar.pushWarning(
                 "WebSDB", self.tr("Session expired, please connect again")
             )
@@ -396,11 +401,11 @@ class WebSDBPlugin:
         )
 
         icon_path = "icons:icon_opt.png"
-        self.add_action(
+        self.action_options = self.add_action(
             icon_path,
-            text=self.tr("Read SDB options"),
+            text=self.tr("Options"),
             callback=self.set_options,
-            add_to_menu=False,
+            add_to_toolbar=False,
             parent=self.iface.mainWindow(),
         )
 
@@ -436,15 +441,16 @@ class WebSDBPlugin:
             icon_path,
             text=self.tr("Interpolate on grid..."),
             callback=self.interpolate_on_grid,
+            add_to_menu=False,
             parent=self.iface.mainWindow(),
         )
 
-        # Nothing is connected yet at startup - only Connect (index 0) stays
-        # enabled so the user can log in; everything after it requires an
+        # Nothing is connected yet at startup - only Connect (index 0) and
+        # Options (local-settings only, no API access) stay enabled so the
+        # user can log in or tweak options; everything else requires an
         # active project connection.
         self.dbok = False
-        for ac in self.actions[1:]:
-            ac.setDisabled(True)
+        self._set_gated_actions_enabled(False)
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -559,8 +565,7 @@ class WebSDBPlugin:
         self.dbok = False
         self.api.token = None
         self.settings.setValue("token", "")
-        for ac in self.actions[1:]:
-            ac.setDisabled(True)
+        self._set_gated_actions_enabled(False)
 
     def set_options(self):
         """Set plugin options"""
