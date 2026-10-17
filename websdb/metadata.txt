@@ -3,12 +3,18 @@ name=WebSDB
 description=Read structural geology data from a WebSDB server into QGIS
 category=Database
 hasProcessingProvider=False
-about=WebSDB is a plugin to log in to a WebSDB server, read structural geology data from a project over its REST API, and plot it on the map or stereonet.
+about=WebSDB is QGIS plugin to read structural geology data from a WebSDB server and plot it on the map or stereonet
+
+    Key Features:
+    - Bundled common structural geology symbols.
+    - Interpolate structural data on grid.
+    - Automatic correction of magnetic declination
+
 icon=resources/images/icon_sdb.png
 tags=geology, structural data, REST API
 
 # credits and contact
-author=Ondrej LEXA
+author=Ondrej Lexa
 email=lexa.ondrej@gmail.com
 homepage=https://github.com/ondrolexa/qgis-websdb-plugin
 repository=https://github.com/ondrolexa/qgis-websdb-plugin
@@ -23,4 +29,8 @@ qgisMaximumVersion=4.99
 
 # versioning
 version=1.0.1
-changelog=
+changelog=1.0.1 - 2026-10-18
+ - Updated vendored APSG to 2.0.6
+ - Stereonet contours now use the Kamb method.
+1.0.0 - 2026-08-03
+ - Initial release
