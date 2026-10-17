@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Vendored APSG patched to pass the Bandit security scan: `assert` statements replaced with
   exceptions, `random` replaced with NumPy's generator, unused pickle-based `save()`/`load()`
   methods removed.
+- Fixed "structures read successfully" and "grid points interpolated" notifications showing
+  `{layer.featureCount()}` instead of the number of features.
 
 ## 1.0.0 - 2026-08-03
 

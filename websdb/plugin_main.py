@@ -897,7 +897,8 @@ class WebSDBPlugin:
                 QgsProject.instance().addMapLayer(layer)
                 self.bar.pushSuccess(
                     "WebSDB",
-                    "{layer.featureCount()} " + self.tr("structures read successfully"),
+                    f"{layer.featureCount()} "
+                    + self.tr("structures read successfully"),
                 )
 
         restore_cursor()
@@ -1116,5 +1117,5 @@ class WebSDBPlugin:
         restore_cursor()
         self.bar.pushSuccess(
             "WebSDB",
-            "{layer.featureCount()} " + self.tr("grid points interpolated"),
+            f"{layer.featureCount()} " + self.tr("grid points interpolated"),
         )
