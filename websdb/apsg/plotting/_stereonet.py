@@ -1,5 +1,3 @@
-import pickle
-
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -238,32 +236,6 @@ class StereoNet:
         ]
         return s
 
-    def save(self, filename):
-        """
-        Save stereonet to pickle file
-
-        Args:
-            filename (str): name of picke file
-        Returns:
-            None: The stereonet is serialized and written to a pickle file.
-        """
-        with open(filename, "wb") as f:
-            pickle.dump(self.to_json(), f, pickle.HIGHEST_PROTOCOL)
-
-    @classmethod
-    def load(cls, filename):
-        """
-        Load stereonet from pickle file
-
-        Args:
-            filename (str): name of picke file
-        Returns:
-            StereoNet: Loaded stereonet instance from pickle file.
-        """
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return cls.from_json(data)
-
     def init_figure(self):
         self.fig = plt.figure(
             figsize=apsg_conf.figsize,
@@ -384,7 +356,8 @@ class StereoNet:
         Returns:
             None: Features are plotted using the provided style.
         """
-        assert isinstance(style, StereoNetStyle), "Style must StereoNetStyle object"
+        if not isinstance(style, StereoNetStyle):
+            raise TypeError("Style must StereoNetStyle object")
 
         try:
             artist = style.create_artist(*args)

@@ -1,5 +1,3 @@
-import pickle
-
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import circmean, vonmises
@@ -84,28 +82,6 @@ class RosePlot:
         s._artists = [roseartist_from_json(artist) for artist in json_dict["artists"]]
         return s
 
-    def save(self, filename):
-        """
-        Save stereonet to pickle file
-
-        Args:
-            filename (str): name of picke file
-        """
-        with open(filename, "wb") as f:
-            pickle.dump(self.to_json(), f, pickle.HIGHEST_PROTOCOL)
-
-    @classmethod
-    def load(cls, filename):
-        """
-        Load stereonet from pickle file
-
-        Args:
-            filename (str): name of picke file
-        """
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return cls.from_json(data)
-
     def init_figure(self):
         self.fig = plt.figure(
             0,
@@ -187,7 +163,8 @@ class RosePlot:
             Features in args are automatically filtered by style to accept only compatible features
 
         """
-        assert isinstance(style, RosePlotStyle), "Style must RosePlotStyle object"
+        if not isinstance(style, RosePlotStyle):
+            raise TypeError("Style must RosePlotStyle object")
 
         artist = style.create_artist(*args)
         if len(artist.args) > 0:

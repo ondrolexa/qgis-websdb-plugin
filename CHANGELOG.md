@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   deviations above random).
 - Stereonet contours now use the Kamb method; replaced the contour "Resolution" setting
   with "Sigma" (Kamb smoothing, default 3.0).
+- Vendored APSG patched to pass the Bandit security scan: `assert` statements replaced with
+  exceptions, `random` replaced with NumPy's generator, unused pickle-based `save()`/`load()`
+  methods removed.
 
 ## 1.0.0 - 2026-08-03
 

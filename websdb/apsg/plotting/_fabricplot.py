@@ -1,5 +1,3 @@
-import pickle
-
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Polygon
@@ -51,32 +49,6 @@ class FabricPlot:
         s = cls(**json_dict["kwargs"])
         s._artists = [fabricartist_from_json(artist) for artist in json_dict["artists"]]
         return s
-
-    def save(self, filename):
-        """
-        Save fabric plot to pickle file
-
-        Args:
-            filename (str): name of picke file
-        Returns:
-            None: The fabric plot is serialized and written to a pickle file.
-        """
-        with open(filename, "wb") as f:
-            pickle.dump(self.to_json(), f, pickle.HIGHEST_PROTOCOL)
-
-    @classmethod
-    def load(cls, filename):
-        """
-        Load fabric plot from pickle file
-
-        Args:
-            filename (str): name of picke file
-        Returns:
-            FabricPlot: Loaded fabric plot instance from pickle file.
-        """
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return cls.from_json(data)
 
     def init_figure(self):
         self.fig = plt.figure(
@@ -165,7 +137,8 @@ class FabricPlot:
         Returns:
             None: Features are plotted using the provided style.
         """
-        assert isinstance(style, FabricPlotStyle), "Style must FabricPlotStyle object"
+        if not isinstance(style, FabricPlotStyle):
+            raise TypeError("Style must FabricPlotStyle object")
 
         artist = style.create_artist(*args)
         if len(artist.args) > 0:

@@ -173,7 +173,8 @@ class KentDistribution:
         ) = KentDistribution.gammas_to_spherical_coordinates(self.gamma1, self.gamma2)
 
         for gamma in (gamma1, gamma2, gamma3):
-            assert len(gamma) == 3
+            if len(gamma) != 3:
+                raise ValueError("gamma vectors must have 3 components.")
 
         self._cached_rvs = np.array([], dtype=np.float64).reshape(0, 3)
 

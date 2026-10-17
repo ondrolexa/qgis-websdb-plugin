@@ -1,4 +1,3 @@
-import pickle
 import warnings
 
 import numpy as np
@@ -219,29 +218,3 @@ class StereoGrid:
             elif calculation["op"] == "angmech":
                 grid.angmech(data, **calculation["kwargs"])
         return grid
-
-    def save(self, filename):
-        """
-        Save StereoGrid to pickle file
-
-        Args:
-            filename (str): name of pickle file
-        Returns:
-            None: The grid is serialized and written to a pickle file.
-        """
-        with open(filename, "wb") as f:
-            pickle.dump(self.to_json(), f, pickle.HIGHEST_PROTOCOL)
-
-    @classmethod
-    def load(cls, filename):
-        """
-        Load StereoGrid from pickle file
-
-        Args:
-            filename (str): name of pickle file
-        Returns:
-            StereoGrid: Loaded grid instance from pickle file.
-        """
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return cls.from_json(data)

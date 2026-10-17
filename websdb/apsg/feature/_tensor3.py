@@ -94,8 +94,10 @@ class DeformationGradient3(Matrix3):
         if Ryz is None:
             Ryz = Rxz / Rxy
 
-        assert Rxy >= 1, "Rxy must be greater than or equal to 1."
-        assert Ryz >= 1, "Ryz must be greater than or equal to 1."
+        if Rxy < 1:
+            raise ValueError("Rxy must be greater than or equal to 1.")
+        if Ryz < 1:
+            raise ValueError("Ryz must be greater than or equal to 1.")
 
         y = (Ryz / Rxy) ** (1 / 3)
         return cls.from_comp(xx=y * Rxy, yy=y, zz=y / Ryz)
@@ -1177,8 +1179,10 @@ class Ellipsoid(Tensor3):
         if Ryz is None:
             Ryz = Rxz / Rxy
 
-        assert Rxy >= 1, "Rxy must be greater than or equal to 1."
-        assert Ryz >= 1, "Ryz must be greater than or equal to 1."
+        if Rxy < 1:
+            raise ValueError("Rxy must be greater than or equal to 1.")
+        if Ryz < 1:
+            raise ValueError("Ryz must be greater than or equal to 1.")
 
         y = (Ryz / Rxy) ** (1 / 3)
         return cls.from_stretch(y * Rxy, y, y / Ryz, **kwargs)

@@ -1361,7 +1361,8 @@ class Vector3Set(FeatureSet):
         Returns:
             FeatureSet: The created feature set.
         """
-        assert isinstance(p, Pair), "Argument must be Pair object."
+        if not isinstance(p, Pair):
+            raise TypeError("Argument must be Pair object.")
         if beta is None:
             beta = kappa / 2
         kd = KentDistribution(p.lvec, p.fvec.cross(p.lvec), p.fvec, kappa, beta)
@@ -2807,9 +2808,8 @@ class ClusterSet:
     """
 
     def __init__(self, d, **kwargs):
-        assert isinstance(d, (Vector2Set, Vector3Set, PairSet)), (
-            "Only vec2set, vecset and pairset could be clustered"
-        )
+        if not isinstance(d, (Vector2Set, Vector3Set, PairSet)):
+            raise TypeError("Only vec2set, vecset and pairset could be clustered")
         self.data = d.copy()
         self.maxclust = kwargs.get("maxclust", 2)
         self.angle = kwargs.get("angle", None)

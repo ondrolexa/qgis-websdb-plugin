@@ -594,11 +594,9 @@ class Fault(Pair):
     @classmethod
     def random(cls):
         """Random Fault."""
-        import random
-
         lvec, p = Vector3.random(), Vector3.random()
         fvec = lvec.cross(p)
-        return cls(fvec, lvec, random.choice([-1, 1]))
+        return cls(fvec, lvec, int(np.random.default_rng().choice([-1, 1])))
 
     @property
     def sense(self):

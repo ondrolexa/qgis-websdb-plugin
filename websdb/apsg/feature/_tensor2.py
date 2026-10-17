@@ -66,7 +66,8 @@ class DeformationGradient2(Matrix2):
 
         """
 
-        assert R >= 1, "R must be greater than or equal to 1."
+        if R < 1:
+            raise ValueError("R must be greater than or equal to 1.")
 
         return cls.from_comp(xx=R ** (1 / 2), yy=R ** (-1 / 2))
 
@@ -646,7 +647,8 @@ class Ellipse(Tensor2):
         """
         Return diagonal tensor defined by axial ratio.
         """
-        assert R >= 1, "R must be greater than or equal to 1."
+        if R < 1:
+            raise ValueError("R must be greater than or equal to 1.")
         return cls.from_stretch(R**0.5, R**-0.5, **kwargs)
 
     @property
