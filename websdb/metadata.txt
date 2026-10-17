@@ -29,8 +29,9 @@ qgisMaximumVersion=4.99
 
 # versioning
 version=1.0.1
-changelog=1.0.1 - 2026-10-18
+changelog=
+ 1.0.1 2026-10-18
  - Updated vendored APSG to 2.0.6
  - Stereonet contours now use the Kamb method.
-1.0.0 - 2026-08-03
+ 1.0.0 2026-08-03
  - Initial release
