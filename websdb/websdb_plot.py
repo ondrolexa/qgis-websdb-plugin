@@ -51,11 +51,23 @@ class MyMplCanvas(FigureCanvas):
 
     def pin_net_left(self):
         """Keep the net at a fixed distance from the left edge of the figure,
-        so extra width goes to the right side instead of the left margin."""
-        if getattr(self.net, "ax", None) is None:
+        so extra width goes to the right side instead of the left margin, and
+        keep the colorbar (if any) right beside the net."""
+        ax = getattr(self.net, "ax", None)
+        if ax is None:
             return
-        self.net.ax.set_anchor("W")
+        ax.set_anchor("W")
         self.figure.subplots_adjust(left=NET_LEFT_MARGIN / self.figure.bbox.width)
+        ax.apply_aspect()
+        net = ax.get_position()
+        for cax in self.figure.axes:
+            if cax is ax:
+                continue
+            cax.apply_aspect()
+            pos = cax.get_position()
+            # twice the gap of the legend's bbox_to_anchor=(1.05, 1) in apsg
+            x0 = net.x1 + 0.1 * net.width
+            cax.set_position([x0, pos.y0, pos.width, pos.height])
 
 
 class WebSDBPlotDialog(QtWidgets.QDialog, FORM_CLASS):
