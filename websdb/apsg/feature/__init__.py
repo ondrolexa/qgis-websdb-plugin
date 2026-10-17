@@ -1,7 +1,9 @@
-# -*- coding: utf-8 -*-
 import sys
 
+import numpy as np
+
 from apsg.feature._container import (
+    ArcSet,
     ClusterSet,
     ConeSet,
     Direction2Set,
@@ -15,11 +17,20 @@ from apsg.feature._container import (
     OrientationTensor2Set,
     OrientationTensor3Set,
     PairSet,
+    Stress2Set,
     Stress3Set,
     Vector2Set,
     Vector3Set,
 )
-from apsg.feature._geodata import Cone, Direction, Fault, Foliation, Lineation, Pair
+from apsg.feature._geodata import (
+    Arc,
+    Cone,
+    Direction,
+    Fault,
+    Foliation,
+    Lineation,
+    Pair,
+)
 from apsg.feature._paleomag import Core
 from apsg.feature._tensor2 import (
     DeformationGradient2,
@@ -41,47 +52,50 @@ from apsg.math._matrix import Matrix2, Matrix3
 from apsg.math._vector import Axial2, Axial3, Vector2, Vector3
 
 __all__ = (
-    "Vector3",
-    "Axial3",
-    "Vector2",
+    "Arc",
+    "ArcSet",
     "Axial2",
-    "Matrix3",
-    "Matrix2",
-    "Direction",
-    "Lineation",
-    "Foliation",
-    "Pair",
-    "Fault",
-    "Cone",
-    "DeformationGradient3",
-    "Rotation3",
-    "VelocityGradient3",
-    "Stress3",
-    "Ellipsoid",
-    "OrientationTensor3",
-    "DeformationGradient2",
-    "Rotation2",
-    "VelocityGradient2",
-    "Stress2",
-    "Ellipse",
-    "OrientationTensor2",
-    "Vector2Set",
-    "Direction2Set",
-    "FeatureSet",
-    "Vector3Set",
-    "LineationSet",
-    "FoliationSet",
-    "PairSet",
-    "FaultSet",
-    "ConeSet",
-    "EllipseSet",
-    "EllipsoidSet",
-    "OrientationTensor2Set",
-    "OrientationTensor3Set",
-    "Stress3Set",
-    "G",
+    "Axial3",
     "ClusterSet",
+    "Cone",
+    "ConeSet",
     "Core",
+    "DeformationGradient2",
+    "DeformationGradient3",
+    "Direction",
+    "Direction2Set",
+    "Ellipse",
+    "EllipseSet",
+    "Ellipsoid",
+    "EllipsoidSet",
+    "Fault",
+    "FaultSet",
+    "FeatureSet",
+    "Foliation",
+    "FoliationSet",
+    "G",
+    "Lineation",
+    "LineationSet",
+    "Matrix2",
+    "Matrix3",
+    "OrientationTensor2",
+    "OrientationTensor2Set",
+    "OrientationTensor3",
+    "OrientationTensor3Set",
+    "Pair",
+    "PairSet",
+    "Rotation2",
+    "Rotation3",
+    "Stress2",
+    "Stress2Set",
+    "Stress3",
+    "Stress3Set",
+    "Vector2",
+    "Vector2Set",
+    "Vector3",
+    "Vector3Set",
+    "VelocityGradient2",
+    "VelocityGradient3",
 )
 
 
@@ -94,4 +108,10 @@ def feature_from_json(obj_json):
         else:
             args.append(arg)
     kwargs = obj_json.get("kwargs", {})
+    if dtype_cls in (Stress2, Stress3):
+        coefs = args[0]
+        if "stress_convention" not in obj_json:
+            # files written before the mechanical storage hold the geological matrix
+            coefs = (-np.asarray(coefs, dtype=float)).tolist()
+        return dtype_cls._from_canonical(coefs, **kwargs)
     return dtype_cls(*args, **kwargs)

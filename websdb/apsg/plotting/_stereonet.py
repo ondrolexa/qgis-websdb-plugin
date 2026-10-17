@@ -1,28 +1,101 @@
-# -*- coding: utf-8 -*-
-
 import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle
 
 from apsg.config import apsg_conf
 from apsg.feature import feature_from_json
 from apsg.feature._container import (
+    ArcSet,
+    ConeSet,
+    EllipsoidSet,
     FaultSet,
     FoliationSet,
     LineationSet,
     PairSet,
+    Stress3Set,
     Vector3Set,
 )
-from apsg.feature._geodata import Cone, Fault, Foliation, Lineation, Pair
-from apsg.feature._tensor3 import Stress3
+from apsg.feature._geodata import Arc, Cone, Fault, Foliation, Lineation, Pair
+from apsg.feature._tensor3 import Stress3, Tensor3
 from apsg.math._vector import Vector3
 from apsg.plotting._plot_artists import StereoNetArtistFactory
+from apsg.plotting._stereo_engine import rotation_from_axis_angle
+from apsg.plotting._stereo_engine._utils import _as_vectors, _ring_contains
 from apsg.plotting._stereogrid import StereoGrid
 from apsg.plotting._styles import StereoNetStyle
 
-__all__ = ["StereoNet", "quicknet"]
+__all__ = ["StereoNet", "quicknet", "rotation_from_axis_angle"]
+
+
+def _kind_to_projection(kind):
+    """Resolve a ``kind`` config value to a registered matplotlib projection
+    name ("schmidt" or "wulff")."""
+    kind = str(kind).lower()
+    if kind in ("equal-area", "schmidt", "earea"):
+        return "schmidt"
+    elif kind in ("equal-angle", "wulff", "eangle"):
+        return "wulff"
+    raise TypeError("Only 'Equal-area' and 'Equal-angle' implemented")
+
+
+# Tilt axis of the nudge in ``_quadrant_arcs``: generic, so that no round-number
+# orientation is parallel to it (which would leave that orientation unmoved).
+_NUDGE_AXIS = Vector3(0.5, 0.3, 0.8124)
+
+
+def _quadrant_arcs(fol, lin, axis):
+    """Return ``(arcset, outside)`` for the two nodal planes with poles `fol` and `lin`.
+
+    The arcs trace both planes, each once, so the filled polygon is one of the two
+    colour classes of the four quadrants. ``outside`` is the ``region`` of
+    ``StereoNet.arc(kind="filled")`` for which the polygon contains `axis` (which,
+    like its antipode, is in the same class).
+    """
+    fol, lin, axis = Foliation(fol), Lineation(lin), Vector3(axis)
+    poles = (abs(fol.z), abs(lin.z))
+    # The fill cannot resolve a ring through the projection's singular point (a
+    # vertical nodal plane) or lying on the primitive circle (a horizontal one), and
+    # an axis exactly on the horizon or at the nadir has no well defined side: nudge
+    # everything by an invisible 0.001 degree.
+    if (
+        min(poles) < 1e-9
+        or max(poles) > 1 - 1e-9
+        or abs(axis.z) < 1e-9
+        or abs(axis.z) > 1 - 1e-9
+    ):
+        fol, lin, axis = (v.rotate(_NUDGE_AXIS, 1e-3) for v in (fol, lin, axis))
+    a = fol**lin
+    arcs = ArcSet(
+        [
+            Arc(a, lin),
+            Arc(lin, a, short=False),
+            Arc(a, fol, short=False),
+            Arc(fol, a),
+        ]
+    )
+    ring = _as_vectors([np.asarray(v) for arc in arcs for v in arc.path()])
+    t = np.asarray(axis)
+    inside = _ring_contains(ring, t if t[2] >= 0 else -t)
+    return arcs, not inside
+
+
+def _dihedra_arcs(fault):
+    """Return ``(arcset, outside)`` for the extensional dihedra of ``fault``: the
+    quadrants between the fault plane and the auxiliary plane that contain the T axis."""
+    return _quadrant_arcs(fault.fol, fault.lin, fault.t)
+
+
+def _beachball_arcs(stress):
+    """Return ``(arcset, outside)`` for the beach ball of a stress tensor: the
+    quadrants between the two planes through sigma2 at 45 degrees to sigma1 and
+    sigma3 that contain the P axis (sigma1). ``None`` for an isotropic stress, which
+    has no preferred orientation."""
+    e1, e3 = stress.E1, stress.E3
+    if abs(e1 - e3) <= 1e-12 * max(1.0, abs(e1), abs(e3)):
+        return None
+    p, t = np.asarray(stress.sigma1dir), np.asarray(stress.sigma3dir)
+    return _quadrant_arcs((p + t) / np.sqrt(2), (p - t) / np.sqrt(2), p)
 
 
 class StereoNet:
@@ -37,19 +110,31 @@ class StereoNet:
         kind (str): Equal area ("equal-area", "schmidt" or "earea") or equal angle
             ("equal-angle", "wulff" or "eangle") projection. Default is "equal-area"
         hemisphere (str): "lower" or "upper". Default is "lower"
-        overlay_position (tuple or Pair): Position of overlay X, Y, Z given by Pair.
-            X is direction of linear element, Z is normal to planar.
-            Default is (0, 0, 0, 0)
-        rotate_data (bool): Whether data should be rotated together with overlay.
-            Default False
-        minor_ticks (None or float): Default None
-        major_ticks (None or float): Default None
-        overlay (bool): Whether to show overlay. Default is True
-        overlay_step (float): Grid step of overlay. Default 15
-        overlay_resolution (float): Resolution of overlay. Default 181
+        rotation (Rotation3 or array-like): Rotation applied to the whole net.
+            Default None (identity, no rotation)
+        rotate_data (bool): Whether plotted data should follow `rotation` along
+            with the grid. Default True
+        grid (bool): Whether to show the grid. Default is True
+        grid_step (float): Grid step. Default 15
+        grid_color (color): Grid line color. Default "grey"
+        grid_style (str): Grid line style. Default ":"
         clip_pole (float): Clipped cone around poles. Default 15
-        grid_type (str): Type of contouring grid "gss" or "sfs". Default "gss"
-        grid_n (int): Number of counting points in grid. Default 3000
+        primitive_lw (float): Line width of the primitive (outer) circle. Default 1.5
+        primitive_color (color): Color of the primitive circle. Default None
+            (matplotlib's own default)
+        azimuth_ticks (bool): Whether to show N/E/S/W compass tick labels around
+            the rim. Default False
+        azimuth_ticks_kws (dict): Extra keyword arguments passed to the underlying
+            ``set_azimuth_ticks``. Default {}
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
+
+    Note:
+        Each `contour()` call owns its own `StereoGrid` -- pass a `Vector3Set`
+        to have one created and its density calculated automatically (sized
+        per `apsg_conf.stereogrid`'s `type`/`n`), or pass an already-populated
+        `StereoGrid` (e.g. built via `apply_func`/`angmech`) to plot it
+        directly. Multiple `contour()` calls add independent layers.
 
     Examples:
         >>> l = linset.random_fisher(position=lin(120, 40))
@@ -63,16 +148,9 @@ class StereoNet:
         self._kwargs = apsg_conf.stereonet.copy()
         self._kwargs.update((k, kwargs[k]) for k in self._kwargs.keys() & kwargs.keys())
         self._kwargs["title"] = kwargs.get("title", None)
-        self.grid = StereoGrid(**self._kwargs)
-        # alias for Projection instance
-        self.proj = self.grid.proj
-        self.angles_gc = np.linspace(
-            -90 + 1e-7, 90 - 1e-7, int(self.proj.overlay_resolution / 2)
-        )
-        self.angles_sc = np.linspace(
-            -180 + 1e-7, 180 - 1e-7, self.proj.overlay_resolution
-        )
-
+        self._projection = _kind_to_projection(self._kwargs["kind"])
+        rotation = self._kwargs["rotation"]
+        self._rotation = np.eye(3) if rotation is None else np.asarray(rotation)
         self.clear()
 
     def clear(self):
@@ -80,67 +158,64 @@ class StereoNet:
 
         self._artists = []
 
-    def _draw_layout(self):
-        # overlay
-        if self._kwargs["overlay"]:
-            ov = self.proj.get_grid_overlay()
-            for dip, d in ov["lat_e"].items():
-                self.ax.plot(d["x"], d["y"], "k:", lw=1)
-            for dip, d in ov["lat_w"].items():
-                self.ax.plot(d["x"], d["y"], "k:", lw=1)
-            for dip, d in ov["lon_n"].items():
-                self.ax.plot(d["x"], d["y"], "k:", lw=1)
-            for dip, d in ov["lon_s"].items():
-                self.ax.plot(d["x"], d["y"], "k:", lw=1)
-            if ov["main_xz"]:
-                self.ax.plot(ov["main_xz"]["x"], ov["main_xz"]["y"], "k:", lw=1)
-            if ov["main_yz"]:
-                self.ax.plot(ov["main_yz"]["x"], ov["main_yz"]["y"], "k:", lw=1)
-            if ov["main_xy"]:
-                self.ax.plot(ov["main_xy"]["x"], ov["main_xy"]["y"], "k:", lw=1)
-            if ov["polehole_n"]:
-                self.ax.plot(ov["polehole_n"]["x"], ov["polehole_n"]["y"], "k", lw=1)
-            if ov["polehole_s"]:
-                self.ax.plot(ov["polehole_s"]["x"], ov["polehole_s"]["y"], "k", lw=1)
-            if ov["main_x"]:
-                self.ax.plot(ov["main_x"]["x"], ov["main_x"]["y"], "k", lw=2)
-            if ov["main_y"]:
-                self.ax.plot(ov["main_y"]["x"], ov["main_y"]["y"], "k", lw=2)
-            if ov["main_z"]:
-                self.ax.plot(ov["main_z"]["x"], ov["main_z"]["y"], "k", lw=2)
+    # -- rotation ---------------------------------------------------------
 
-        # Projection circle frame
-        theta = np.linspace(0, 2 * np.pi, 200)
-        self.ax.plot(np.cos(theta), np.sin(theta), "k", lw=2)
-        # Minor ticks
-        if self._kwargs["minor_ticks"] is not None:
-            ticks = np.array([1, 1.02])
-            theta = np.arange(0, 2 * np.pi, np.radians(self._kwargs["minor_ticks"]))
-            self.ax.plot(
-                np.outer(ticks, np.cos(theta)),
-                np.outer(ticks, np.sin(theta)),
-                "k",
-                lw=1,
+    @property
+    def rotation(self):
+        """The current 3x3 rotation matrix applied to the whole net (grid
+        and, when ``rotate_data`` is True, plotted data). Set via the
+        ``rotation`` constructor keyword or ``set_rotation``."""
+        return self._rotation.copy()
+
+    def set_rotation(self, matrix):
+        """Set an arbitrary rotation matrix for the whole net. Accepts
+        anything ``np.asarray``-coercible to a 3x3 proper rotation matrix,
+        including apsg's own ``Rotation3``; use ``rotation_from_axis_angle``
+        (re-exported from this module) to build one from an axis/angle.
+        Pass ``None`` to reset to the identity (no rotation).
+
+        Returns:
+            None
+        """
+        self._rotation = np.eye(3) if matrix is None else np.asarray(matrix)
+        if hasattr(self, "ax"):
+            self.ax.set_rotation(self._rotation)
+
+    def _draw_layout(self):
+        if self._kwargs["grid"]:
+            self.ax.grid(
+                True,
+                linestyle=self._kwargs["grid_style"],
+                color=self._kwargs["grid_color"],
             )
-        # Major ticks
-        if self._kwargs["major_ticks"] is not None:
-            ticks = np.array([1, 1.03])
-            theta = np.arange(0, 2 * np.pi, np.radians(self._kwargs["major_ticks"]))
-            self.ax.plot(
-                np.outer(ticks, np.cos(theta)),
-                np.outer(ticks, np.sin(theta)),
-                "k",
-                lw=1.5,
-            )
-        # add clipping circle
-        self.primitive = Circle(
-            (0, 0),
-            radius=1,
-            edgecolor="black",
-            fill=False,
-            label="_nolegend_",
-        )
-        self.ax.add_patch(self.primitive)
+        else:
+            # matplotlib's grid() enables the grid regardless of a false first
+            # argument -- with a warning -- when style kwargs are also given, so
+            # those must be omitted entirely to actually keep the grid off
+            self.ax.grid(False)
+        self.ax.set_longitude_grid(self._kwargs["grid_step"])
+        self.ax.set_latitude_grid(self._kwargs["grid_step"])
+        self.ax.set_clip_pole(self._kwargs["clip_pole"])
+        self.ax.spines["geo"].set_linewidth(self._kwargs["primitive_lw"])
+        if self._kwargs["primitive_color"] is not None:
+            self.ax.spines["geo"].set_edgecolor(self._kwargs["primitive_color"])
+        # the axes' own clear() already draws default N/E/S/W compass ticks
+        # unconditionally; honor azimuth_ticks=False by removing them, or
+        # apply azimuth_ticks_kws (angles/labels/frac/tick_frac/...) on top
+        if self._kwargs["azimuth_ticks"]:
+            azimuth_ticks_kws = dict(self._kwargs["azimuth_ticks_kws"])
+            angles = azimuth_ticks_kws.pop("angles", [0, 90, 180, 270])
+            labels = azimuth_ticks_kws.pop("labels", ["N", "E", "S", "W"])
+            self.ax.set_azimuth_ticks(angles, labels, **azimuth_ticks_kws)
+        else:
+            self.ax._clear_azimuth_ticks()
+        # keep the graticule strictly behind every plotted artist (points,
+        # great circles, filled contours, ...) -- matplotlib's own default
+        # otherwise draws gridlines above patch-like artists such as a
+        # filled contour, letting the grid show through it
+        self.ax.set_axisbelow(True)
+        self.ax.patch.set_zorder(0)
+        self.primitive = self.ax.patch
 
     def _plot_artists(self):
         for artist in self._artists:
@@ -151,7 +226,7 @@ class StereoNet:
         """Return stereonet as JSON dict."""
 
         artists = [artist.to_json() for artist in self._artists]
-        return dict(kwargs=self._kwargs, artists=artists)
+        return {"kwargs": self._kwargs, "artists": artists}
 
     @classmethod
     def from_json(cls, json_dict):
@@ -195,29 +270,31 @@ class StereoNet:
             dpi=apsg_conf.dpi,
             facecolor=apsg_conf.facecolor,
         )
+        netname = "Schmidt net" if self._projection == "schmidt" else "Wulff net"
         if hasattr(self.fig.canvas.manager, "set_window_title"):
-            self.fig.canvas.manager.set_window_title(self.proj.netname)
+            self.fig.canvas.manager.set_window_title(netname)
 
     def _render(self):
-        self.ax = self.fig.add_subplot()
-        self.ax.set_aspect(1)
-        self.ax.set_axis_off()
+        self.ax = self.fig.add_subplot(
+            projection=self._projection,
+            hemisphere=self._kwargs["hemisphere"],
+            rotation=self._rotation,
+            rotate_data=self._kwargs["rotate_data"],
+        )
         self._draw_layout()
         self._plot_artists()
-        self.ax.set_xlim(-1.05, 1.05)
-        self.ax.set_ylim(-1.05, 1.05)
         h, labels = self.ax.get_legend_handles_labels()
         if h:
-            self.ax.legend(
-                h,
-                labels,
-                bbox_to_anchor=(1.05, 1),
-                prop={"size": 11},
-                loc="upper left",
-                borderaxespad=0,
-                scatterpoints=1,
-                numpoints=1,
-            )
+            legend_kwargs = {
+                "bbox_to_anchor": (1.05, 1),
+                "prop": {"size": 11},
+                "loc": "upper left",
+                "borderaxespad": 0,
+                "scatterpoints": 1,
+                "numpoints": 1,
+                **self._kwargs["legend_kws"],
+            }
+            self.ax.legend(h, labels, **legend_kwargs)
         if self._kwargs["title"] is not None:
             self.fig.suptitle(self._kwargs["title"], **self._kwargs["title_kws"])
         if self._kwargs["tight_layout"]:
@@ -236,19 +313,36 @@ class StereoNet:
         self._render()
 
     def format_coord(self, x, y):
-        """Format stereonet coordinates."""
+        """Format stereonet coordinates.
+
+        Uses the same axial hemisphere convention as ``point()``/
+        ``great_circle()``/``contour()`` (a 180 degree rotation for
+        ``hemisphere="upper"``, via ``_hemisphere_rotate``), not the
+        directional one ``vector()`` needs -- the latter is a reflection
+        that flips which raw vectors land inside the primitive circle at
+        all, which previously made this cursor readout blank across the
+        whole net whenever ``hemisphere="upper"``. ``_data_to_axial``
+        inverts ``_fold_axial_to_data`` (hemisphere and, when
+        ``rotate_data`` is True, the net's own rotation) to recover the
+        true feature under the cursor; ``project(..., fold=True)`` then
+        re-applies that same forward transform to check membership in the
+        primitive circle exactly as ``point()`` would place this vector.
+        """
 
         if x is not None and y is not None:
-            if (x**2 + y**2) <= 1:
-                lcoord = Lineation(*self.proj.inverse_data(x, y))
-                fcoord = Foliation(*self.proj.inverse_data(x, y))
+            v = self.ax._data_to_axial(x, y)[0]
+            X, Y = self.ax.project(v, clip_inside=False, fold=True)
+            if (X - 0.5) ** 2 + (Y - 0.5) ** 2 <= 0.25:
+                lcoord = Lineation(*v)
+                fcoord = Foliation(*v)
                 return f"{lcoord} {fcoord}"
         return ""
 
     def show(self):
         """Show stereonet."""
 
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         self.ax.format_coord = self.format_coord  # ty: ignore
@@ -265,11 +359,12 @@ class StereoNet:
         Returns:
             None: The figure is saved to the specified graphics file.
         """
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         self.fig.savefig(filename, **kwargs)
-        plt.close(0)
+        plt.close(self.fig)  # don't leave open for Jupyter's auto-display
 
     ########################################
     # STYLED PLOTTING                      #
@@ -291,9 +386,19 @@ class StereoNet:
         """
         assert isinstance(style, StereoNetStyle), "Style must StereoNetStyle object"
 
-        artist = style.create_artist(*args)
+        try:
+            artist = style.create_artist(*args)
+        except TypeError as err:
+            print(err)
+            return
         if len(artist.args) > 0:
             self._artists.append(artist)
+
+    def _add_artist(self, factory_method, *args, **kwargs):
+        try:
+            self._artists.append(factory_method(*args, **kwargs))
+        except TypeError as err:
+            print(err)
 
     ########################################
     # PLOTTING METHODS                     #
@@ -320,11 +425,7 @@ class StereoNet:
         Returns:
             None: Linear features or poles are plotted as points.
         """
-        try:
-            artist = StereoNetArtistFactory.create_point(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_point, *args, **kwargs)
 
     # backward compatibility
     line = pole = point
@@ -352,11 +453,7 @@ class StereoNet:
         Returns:
             None: Vector features are plotted as points.
         """
-        try:
-            artist = StereoNetArtistFactory.create_vector(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_vector, *args, **kwargs)
 
     def scatter(self, *args, **kwargs):
         """
@@ -381,11 +478,7 @@ class StereoNet:
         Returns:
             None: Vector-like features are plotted as points with variable properties.
         """
-        try:
-            artist = StereoNetArtistFactory.create_scatter(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_scatter, *args, **kwargs)
 
     def great_circle(self, *args, **kwargs):
         """
@@ -406,38 +499,56 @@ class StereoNet:
         Returns:
             None: Planar features are plotted as great circles.
         """
-        try:
-            artist = StereoNetArtistFactory.create_great_circle(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_great_circle, *args, **kwargs)
 
     gc = great_circle
 
     def arc(self, *args, **kwargs):
         """
-        Plot arc between vectors along great circle(s).
+        Plot arc(s) between vectors.
 
-        Note: You should pass several features in connection order
+        Two calling conventions are supported:
+
+        - Pass one or more ``Arc``/``ArcSet`` instances -- each contributes its own
+          independently-configured curved path (see ``Arc`` for how ``curvature``,
+          ``positive`` and ``short`` control its shape).
+        - Pass several raw ``Vector3`` (or ``Vector3Set``) like features in connection
+          order -- consecutive pairs are connected by a plain great-circle arc
+          (equivalent to ``Arc(p1, p2)`` with default ``curvature=0, positive=True,
+          short=True``). This is the legacy convention and remains fully supported.
+
+        An arc is drawn as a path on the sphere, exactly as computed, and only where it
+        runs through the displayed hemisphere. E.g. ``short=False`` between two
+        lineations shows just the two pieces beyond the endpoints, leaving a gap where
+        the short arc would be; the piece through the other hemisphere is visible on a
+        net with ``hemisphere="upper"``.
 
         Args:
-            Vector3 or Vector3Set like feature(s)
+            Arc or ArcSet instance(s), or Vector3/Vector3Set like feature(s) to
+            connect pairwise in sequence.
 
         Keyword Args:
+            kind (str): Rendering mode, "line", "points" or "filled". Default "line".
+                "filled" fills the polygon bounded by the arcs taken in order, closed
+                by great-circle arcs between the last and the first point, using only
+                ``alpha`` and ``color`` (no outline)
+            region (str): Which side of the polygon "filled" fills, "inside" or
+                "outside". "inside" is the side not containing the point antipodal to
+                the net's center; "outside" is the rest of the net. Default "inside"
             alpha (scalar): Set the alpha value. Default None
-            color (color): Set the color of the point. Default None
-            ls (str): Line style string (only for multiple features).
-                Default "-"
-            lw (float): Set line width. Default 1.5
+            color (color): Set the color. Default None
+            ls (str): Line style string (line mode). Default "-"
+            lw (float): Set line width (line mode). Default 1.5
+            marker (str): Marker style (points mode). Default "o"
+            ms (int): Marker size (points mode). Default 6
+            mec (color): Marker edge color (points mode). Default None
+            mfc (color): Marker face color (points mode). Default None
+            mew (int): Marker edge width (points mode). Default 1
 
         Returns:
-            None: Arcs are plotted between vectors along great circles.
+            None: Arc(s) are plotted.
         """
-        try:
-            artist = StereoNetArtistFactory.create_arc(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_arc, *args, **kwargs)
 
     def cone(self, *args, **kwargs):
         """
@@ -456,11 +567,7 @@ class StereoNet:
         Returns:
             None: Cones are plotted as small circles with given apical angles.
         """
-        try:
-            artist = StereoNetArtistFactory.create_cone(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_cone, *args, **kwargs)
 
     def pair(self, *args, **kwargs):
         """
@@ -480,11 +587,7 @@ class StereoNet:
         Returns:
             None: Pair features are plotted as great circle and point.
         """
-        try:
-            artist = StereoNetArtistFactory.create_pair(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_pair, *args, **kwargs)
 
     def fault(self, *args, **kwargs):
         """
@@ -505,20 +608,20 @@ class StereoNet:
         Returns:
             None: Fault features are plotted as great circle and arrow.
         """
-        try:
-            artist = StereoNetArtistFactory.create_fault(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_fault, *args, **kwargs)
 
     def hoeppner(self, *args, **kwargs):
         """
-        Plot fault feature(s) on Hoeppner (tangent lineation) plot.
+        Plot fault or pair feature(s) on Hoeppner (tangent lineation) plot.
 
-        Note: Arrow is styled according to default arrow config
+        Note: Arrow is styled according to default arrow config, except its
+            pivot, which is taken from apsg_conf.stereonet_hoeppner.pivot
+            (default "middle"). A ``Pair``/``PairSet`` has no movement sense,
+            so its lineation is drawn as a plain line through the plane's
+            pole, with no arrowhead, instead of an arrow.
 
         Args:
-            Fault or FaultSet feature(s)
+            Fault, FaultSet, Pair or PairSet feature(s)
 
         Keyword Args:
             alpha (scalar): Set the alpha value. Default None
@@ -528,13 +631,56 @@ class StereoNet:
             lw (float): Set line width. Default 1.5
 
         Returns:
-            None: Fault features are plotted on Hoeppner plot.
+            None: Fault/pair features are plotted on Hoeppner plot.
         """
-        try:
-            artist = StereoNetArtistFactory.create_hoeppner(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_hoeppner, *args, **kwargs)
+
+    def dihedra(self, *args, **kwargs):
+        """
+        Plot the extensional dihedra of fault feature(s).
+
+        Each fault is drawn as a filled polygon, the two opposite quadrants between the
+        fault plane and the auxiliary plane (perpendicular to the slip) that contain
+        the T axis. Overlapping polygons of a ``FaultSet`` add up.
+
+        Args:
+            Fault or FaultSet feature(s)
+
+        Keyword Args:
+            color (color): Set the fill color. Default None
+            alpha (scalar): Set the alpha value. Default None, i.e. 0.3 for a few
+                faults, lowered as 1.5 / n for larger sets
+            label (str): Legend label. Default depends on the features
+
+        Returns:
+            None: Fault dihedra are plotted.
+        """
+        self._add_artist(StereoNetArtistFactory.create_dihedra, *args, **kwargs)
+
+    def beachball(self, *args, **kwargs):
+        """
+        Plot beach ball of stress tensor(s).
+
+        The two nodal planes pass through the intermediate principal stress at 45
+        degrees to the maximum (sigma1, the P axis) and minimum (sigma3, the T axis)
+        principal stresses and divide the net into four quadrants. The quadrants
+        containing the P axis, i.e. the compressive ones, are filled. Beach balls of a
+        ``Stress3Set`` add up where they overlap. Isotropic stress has no
+        orientation and is not drawn.
+
+        Args:
+            Stress3 or Stress3Set feature(s)
+
+        Keyword Args:
+            color (color): Set the fill color. Default "k"
+            alpha (scalar): Set the alpha value. Default None, i.e. 1 for a single
+                stress, lowered as 1.5 / n for larger sets
+            label (str): Legend label. Default depends on the features
+
+        Returns:
+            None: Beach balls are plotted.
+        """
+        self._add_artist(StereoNetArtistFactory.create_beachball, *args, **kwargs)
 
     def arrow(self, *args, **kwargs):
         """
@@ -556,18 +702,14 @@ class StereoNet:
         Returns:
             None: Arrow is plotted at the specified position and direction.
         """
-        try:
-            artist = StereoNetArtistFactory.create_arrow(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_arrow, *args, **kwargs)
 
     def tensor(self, *args, **kwargs):
         """
         Plot principal planes or principal directions of tensor.
 
         Args:
-            OrientationTensor3 like feature(s)
+            OrientationTensor3 like feature, or a set of them (e.g. ``EllipsoidSet``)
 
         Keyword Args:
             planes (bool): When True, plot principal planes, otherwise principal
@@ -577,6 +719,8 @@ class StereoNet:
             ls (str): Line style string (only for multiple features).
                 Default "-"
             lw (float): Set line width. Default 1.5
+            mec (color): Set the marker edge color (principal directions only).
+                Default None (same as color)
             mew (float): Set the marker edge width. Default 1
             ms (float): Set the marker size. Default 9
             marker (str): Marker style string. Default "o"
@@ -584,11 +728,7 @@ class StereoNet:
         Returns:
             None: Principal planes or directions of tensor are plotted.
         """
-        try:
-            artist = StereoNetArtistFactory.create_tensor(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_tensor, *args, **kwargs)
 
     def stress(self, *args, **kwargs):
         """
@@ -600,9 +740,7 @@ class StereoNet:
         Keyword Args:
             alpha (scalar): Set the alpha value. Default None
             color (color): Set the color. Default is red, green, blue for s1, s2, s3
-            ls (str): Line style string (only for multiple features).
-                Default "-"
-            lw (float): Set line width. Default 1.5
+            mec (color): Set the marker edge color. Default None (same as color)
             mew (float): Set the marker edge width. Default 1
             ms (float): Set the marker size. Default 12
             marker (str): Marker style string. Default "*"
@@ -610,11 +748,7 @@ class StereoNet:
         Returns:
             None: Principal stresses are plotted.
         """
-        try:
-            artist = StereoNetArtistFactory.create_stress(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_stress, *args, **kwargs)
 
     def confidence(self, *args, **kwargs):
         """
@@ -630,17 +764,34 @@ class StereoNet:
         cone resamples the data with replacement and takes the ``level``-percentile of
         the angular deviation of the resampled principal eigenvectors from the sample's.
 
+        For groups of symmetric tensors (``EllipsoidSet`` or ``Stress3Set``) use
+        ``method="jelinek"`` (the default when only tensor sets are passed): the
+        confidence ellipses of the principal axes of the mean tensor are plotted (all
+        three, or a single one selected by ``which``), following the linear perturbation
+        method of Jelinek (1978). See ``EllipsoidSet.mean_tensor`` and
+        ``Stress3Set.mean_tensor``.
+
         Args:
-            Vector3Set like feature(s), e.g. LineationSet or FoliationSet
+            Vector3Set like feature(s), e.g. LineationSet or FoliationSet, or
+            EllipsoidSet and Stress3Set feature(s) for ``method="jelinek"``. Vector
+            sets and tensor sets cannot be combined in one call.
 
         Keyword Args:
-            method (str): "fisher", "bingham", "watson" or "bootstrap". Default "fisher"
+            method (str): "fisher", "bingham", "watson", "bootstrap" or "jelinek".
+                Default "fisher" for vector sets and "jelinek" for tensor sets
             which (int): index (0, 1 or 2) of the eigenvector the ellipse is
-                centered on (``method="bingham"`` only). 0 is the major eigenvector,
-                2 is the minor (pole) eigenvector. Default 0.
+                centered on (``method="bingham"`` and ``method="jelinek"`` only). 0 is
+                the major eigenvector, 2 is the minor (pole) eigenvector. Default None,
+                which means 0 for ``"bingham"`` and, for ``"jelinek"``, the ellipses
+                of all three principal axes of the mean tensor are plotted.
             level (float): confidence level. Default 0.95
             n_resamples (int): number of bootstrap resamples (``method="bootstrap"``
                 only). Default 1000
+            normalize (bool): normalize tensors by their mean value before averaging
+                (``method="jelinek"`` only). Default False
+            anisoft (bool): multiply the tilts of the principal axes by an extra
+                factor ``(n - 1) / n``, as jelinekstat and TomoFab do, giving smaller
+                ellipses (``method="jelinek"`` only). Default False
             alpha (scalar): Set the alpha value. Default None
             color (color): Set the color. Default None
             ls (str): Line style string. Default "--"
@@ -649,269 +800,193 @@ class StereoNet:
         Returns:
             None: Confidence cone or ellipse is plotted.
         """
-        try:
-            artist = StereoNetArtistFactory.create_confidence(*args, **kwargs)
-            self._artists.append(artist)
-        except TypeError as err:
-            print(err)
+        self._add_artist(StereoNetArtistFactory.create_confidence, *args, **kwargs)
 
-    def contour(self, *args, **kwargs):
+    def contour(self, source, **kwargs):
         """
-        Plot filled contours in multiples of uniform distribution.
+        Plot contours in multiples of uniform distribution.
+
+        Each call owns its own ``StereoGrid``, so multiple ``contour()``
+        calls on the same ``StereoNet`` add independent layers.
 
         Args:
-            Vector3Set like feature
+            source: Vector3Set like feature -- a new ``StereoGrid`` is
+                created and its density calculated immediately using
+                `method`/`sigma`/`n_max` below; or an already-populated
+                ``StereoGrid`` (e.g. built via ``apply_func``/``angmech``),
+                plotted as-is with `method`/`sigma`/`n_max` ignored.
 
         Keyword Args:
             method (str): "kamb" for modified Kamb contouring technique with exponential
-                smoothing or "sph" for spherical harmonics method. Default "sph"
+                smoothing or "sph" for spherical harmonics method. Default "kamb"
             levels (int or list): number or values of contours. Default 6
-            cmap: matplotlib colormap used for filled contours. Default "Greys"
+            cmap: matplotlib colormap. Default "Greys" when `clip` is True, or
+                "RdBu_r" (diverging, centered on 0) when `clip` is False
+            clip (bool): restrict to the positive (above-uniform) region only.
+                Default True
             colorbar (bool): Show colorbar. Default False
+            colorbar_kws (dict): Extra keyword arguments passed to
+                ``Figure.colorbar``. Default {"shrink": 0.5, "anchor": (0.0, 0.3)}
             alpha (float): transparency. Default None
             antialiased (bool): Default True
             n_max (int): maximum harmonic degree i.e. the angular resolution. Must be
-                even number (for "sph" method). Default 10
-            sigma (float): If None it is automatically calculated (for "kamb" method)
-            sigmanorm (bool): If True scaled counts are normalized by sigma
-                (for "kamb" method). Default True
-            trimzero (bool): Remove values equal to 0. Default True
-            clines (bool): Show contour lines instead filled contours. Default False
-            linewidths (float): contour lines width
+                even number (for "sph" method). Default is derived from `sigma`.
+            sigma (float): controls how much to smooth, for either method. Default 3
+            filled (bool): filled contours if True, contour lines if False.
+                Default True
+            linewidth (float): contour lines width (aliased as `lw`). Default 1
             linestyles (str): contour lines style
-            show_data (bool): Show data as points. Default False
-            data_kws (dict): arguments passed to point factory when `show_data` True
+            line_color (color): color of the black contour-line overlay drawn on
+                top of filled contours. Default "k"
         Returns:
-            None: Filled contours in multiples of uniform distribution are plotted.
+            None: Contours in multiples of uniform distribution are plotted.
         """
-        # try:
-        artist = StereoNetArtistFactory.create_contour(*args, **kwargs)
-        # ad-hoc density calculation needed to access correct grid properties
-        if len(args) > 0:
-            self.grid.calculate_density(
-                args[0],
-                method=artist.kwargs.get("method"),
-                n_max=artist.kwargs.get("n_max"),
-                sigma=artist.kwargs.get("sigma"),
-                sigmanorm=artist.kwargs.get("sigmanorm"),
-                trimzero=artist.kwargs.get("trimzero"),
-            )
+        if "lw" in kwargs and "linewidth" not in kwargs:
+            kwargs["linewidth"] = kwargs.pop("lw")
+        artist = StereoNetArtistFactory.create_contour(source, **kwargs)
         self._artists.append(artist)
-        # except TypeError as err:
-        #    print(err)
 
     ########################################
     # PLOTTING ROUTINES                    #
     ########################################
 
     def _point(self, *args, **kwargs):
-        x_lower, y_lower = self.proj.project_data(*np.vstack(args).T)
-        x_upper, y_upper = self.proj.project_data(*(-np.vstack(args).T))
-        handles = self.ax.plot(
-            np.hstack((x_lower, x_upper)), np.hstack((y_lower, y_upper)), **kwargs
-        )
-        for h in handles:
-            h.set_clip_path(self.primitive)
-        return handles
+        return [self.ax.point(np.vstack(args), **kwargs)]
 
     def _vector(self, *args, **kwargs):
-        x_lower, y_lower, x_upper, y_upper = self.proj.project_data_antipodal(
-            *np.vstack(args).T
-        )
-        if len(x_lower) > 0:
-            handles = self.ax.plot(x_lower, y_lower, **kwargs)
-            for h in handles:
-                h.set_clip_path(self.primitive)
-            u_kwargs = kwargs.copy()
-            u_kwargs["label"] = "_upper"
-            u_kwargs["mec"] = h.get_color()
-            u_kwargs["mfc"] = "none"
-            handles = self.ax.plot(x_upper, y_upper, **u_kwargs)
-            for h in handles:
-                h.set_clip_path(self.primitive)
-        else:
-            u_kwargs = kwargs.copy()
-            u_kwargs["mfc"] = "none"
-            handles = self.ax.plot(x_upper, y_upper, **u_kwargs)
-            for h in handles:
-                h.set_clip_path(self.primitive)
-        return handles
+        return list(self.ax.vector(np.vstack(args), **kwargs))
 
     def _great_circle(self, *args, **kwargs):
-        X, Y = [], []
-        for arg in args:
-            if self.proj.rotate_data:
-                fdv = arg.transform(self.proj.R).dipvec().transform(self.proj.Ri)
-            else:
-                fdv = arg.dipvec()
-            # iterate
-            for fol, dv in zip(np.atleast_2d(arg), np.atleast_2d(fdv)):
-                # plot on lower
-                x, y = self.proj.project_data(
-                    *np.array(
-                        [
-                            np.asarray(Vector3(dv).rotate(Vector3(fol), a))
-                            for a in self.angles_gc
-                        ]
-                    ).T
-                )
-                X.append(np.hstack((x, np.nan)))
-                Y.append(np.hstack((y, np.nan)))
-                # plot on upper
-                x, y = self.proj.project_data(
-                    *np.array(
-                        [
-                            -np.asarray(Vector3(dv).rotate(Vector3(fol), a))
-                            for a in self.angles_gc
-                        ]
-                    ).T
-                )
-                X.append(np.hstack((x, np.nan)))
-                Y.append(np.hstack((y, np.nan)))
-        handles = self.ax.plot(np.hstack(X), np.hstack(Y), **kwargs)
-        for h in handles:
-            h.set_clip_path(self.primitive)
-        return handles
+        return self.ax.great_circle(np.vstack(args), **kwargs)
 
     def _arc(self, *args, **kwargs):
-        X_lower, Y_lower = [], []
-        X_upper, Y_upper = [], []
-        antipodal = any([type(arg) is Vector3 for arg in args])
-        u_kwargs = kwargs.copy()
-        u_kwargs["ls"] = "--"
-        u_kwargs["label"] = "_upper"
-        for arg1, arg2 in zip(args[:-1], args[1:]):
-            steps = max(2, int(arg1.angle(arg2)))
-            # plot on lower
-            x_lower, y_lower, x_upper, y_upper = self.proj.project_data_antipodal(
-                *np.array(
-                    [np.asarray(arg1.slerp(arg2, t)) for t in np.linspace(0, 1, steps)]
-                ).T
-            )
-            X_lower.append(np.hstack((x_lower, np.nan)))
-            Y_lower.append(np.hstack((y_lower, np.nan)))
-            X_upper.append(np.hstack((x_upper, np.nan)))
-            Y_upper.append(np.hstack((y_upper, np.nan)))
-        handles = self.ax.plot(np.hstack(X_lower), np.hstack(Y_lower), **kwargs)
-        for h in handles:
-            h.set_clip_path(self.primitive)
-        if antipodal:
-            u_kwargs["color"] = h.get_color()
-            handles_2 = self.ax.plot(np.hstack(X_upper), np.hstack(Y_upper), **u_kwargs)
-            for h in handles_2:
-                h.set_clip_path(self.primitive)
-        return handles
+        kind = kwargs.pop("kind", "line")
+        if kind not in ("line", "points", "filled"):
+            raise ValueError("kind must be 'line', 'points' or 'filled'")
+        region = kwargs.pop("region", "inside")
+        if region not in ("inside", "outside"):
+            raise ValueError("region must be 'inside' or 'outside'")
+        if kind == "filled":
+            return self._arc_polygon(args, outside=region == "outside", **kwargs)
+        if kind == "points":
+            kwargs["ls"] = "none"
+            kwargs.setdefault("marker", "o")
+        else:
+            kwargs["marker"] = "None"
+
+        segments = []
+        for a in args:
+            curve = np.array([np.asarray(v) for v in a.path()])
+            segments.append(curve)
+            segments.append(np.full((1, 3), np.nan))
+        combined = np.vstack(segments)
+        # An arc is a path on the sphere, not an axial feature: never add its
+        # antipodal reflection, which would refill the gap left by a short=False arc.
+        return [self.ax.path(combined, antipodal=False, **kwargs)]
+
+    def _arc_polygon(self, arcs, outside=False, **kwargs):
+        """Fill the polygon bounded by ``arcs`` taken in order, without outline.
+
+        Gaps between consecutive arcs, and between the last and the first one, are
+        closed by plain great-circle arcs. With ``outside`` the rest of the net is
+        filled instead.
+        """
+        ring = []
+        end = None
+        for a in arcs:
+            if end is not None and end.angle(a.p1) > 1e-6:
+                ring.extend(Arc(end, a.p1).path())
+            ring.extend(a.path())
+            end = a.p2
+        if end.angle(arcs[0].p1) > 1e-6:
+            ring.extend(Arc(end, arcs[0].p1).path())
+        if len(ring) < 3:  # zero-length arcs: no polygon, for either region
+            return []
+        fill_kwargs = {key: kwargs[key] for key in kwargs.keys() & {"alpha", "label"}}
+        if kwargs.get("color") is not None:
+            fill_kwargs["facecolor"] = kwargs["color"]
+        return self.ax.polygon(
+            np.array([np.asarray(v) for v in ring]),
+            outside=outside,
+            edgecolor="none",
+            linewidth=0,
+            **fill_kwargs,
+        )
 
     def _scatter(self, *args, **kwargs):
         legend = kwargs.pop("legend")
         num = kwargs.pop("num")
-        x_lower, y_lower = self.proj.project_data(*np.vstack(args).T)
-        # mask_lower = ~np.isnan(x_lower)
-        x_upper, y_upper = self.proj.project_data(*(-np.vstack(args).T))
-        # mask_upper = ~np.isnan(x_upper)
-        # x_lower, y_lower, x_upper, y_upper = self.proj.project_data_antipodal(
-        #    *np.vstack(args).T
-        # )
-        prop = "sizes"
+        X, Y = self.ax.project(np.vstack(args), clip_inside=True, fold=True)
         if kwargs["s"] is not None:
-            s = np.atleast_1d(kwargs["s"])
-            # kwargs["s"] = np.hstack((s[mask_lower], s[mask_upper]))
-            kwargs["s"] = np.hstack((s, s))
+            kwargs["s"] = np.atleast_1d(kwargs["s"])
         if kwargs["c"] is not None:
-            c = np.atleast_1d(kwargs["c"])
-            # kwargs["c"] = np.hstack((c[mask_lower], c[mask_upper]))
-            kwargs["c"] = np.hstack((c, c))
-            prop = "colors"
-        sc = self.ax.scatter(
-            # np.hstack((x_lower[mask_lower], x_upper[mask_upper])),
-            # np.hstack((y_lower[mask_lower], y_upper[mask_upper])),
-            # **kwargs,
-            np.hstack((x_lower, x_upper)),
-            np.hstack((y_lower, y_upper)),
-            **kwargs,
-        )
+            kwargs["c"] = np.atleast_1d(kwargs["c"])
+        sc = self.ax.scatter(X, Y, transform=self.ax.transAxes, **kwargs)
         if legend:
-            self.ax.legend(
-                *sc.legend_elements(prop, num=num),
-                bbox_to_anchor=(1.05, 1),
-                prop={"size": 11},
-                loc="upper left",
-                borderaxespad=0,
-            )
+            prop = "colors" if kwargs.get("c") is not None else "sizes"
+            legend_kwargs = {
+                "bbox_to_anchor": (1.05, 1),
+                "prop": {"size": 11},
+                "loc": "upper left",
+                "borderaxespad": 0,
+                **self._kwargs["legend_kws"],
+            }
+            self.ax.legend(*sc.legend_elements(prop, num=num), **legend_kwargs)
         sc.set_clip_path(self.primitive)
 
-    # def _cone(self, *args, **kwargs):
-    #     X, Y = [], []
-    #     # get scalar arguments from kwargs
-    #     angles = kwargs.pop("angle")
-    #     for axis, angle in zip(np.vstack(args), angles):
-    #         if self.proj.rotate_data:
-    #             lt = axis.transform(self.proj.R)
-    #             azi, dip = Vector3(lt).geo
-    #             cl_lower = Vector3(azi, dip + angle).transform(self.proj.Ri)
-    #             cl_upper = -Vector3(azi, dip - angle).transform(self.proj.Ri)
-    #         else:
-    #             lt = axis
-    #             azi, dip = Vector3(lt).geo
-    #             cl_lower = Vector3(azi, dip + angle)
-    #             cl_upper = -Vector3(azi, dip - angle)
-    #         # plot on lower
-    #         x, y = self.proj.project_data(
-    #             *np.array([cl_lower.rotate(lt, a) for a in self.angles_sc]).T
-    #         )
-    #         X.append(np.hstack((x, np.nan)))
-    #         Y.append(np.hstack((y, np.nan)))
-    #         # plot on upper
-    #         x, y = self.proj.project_data(
-    #             *np.array([cl_upper.rotate(-lt, a) for a in self.angles_sc]).T
-    #         )
-    #         X.append(np.hstack((x, np.nan)))
-    #         Y.append(np.hstack((y, np.nan)))
-    #     handles = self.ax.plot(np.hstack(X), np.hstack(Y), **kwargs)
-    #     for h in handles:
-    #         h.set_clip_path(self.primitive)
-    #     return handles
-
     def _cone(self, *args, **kwargs):
-        X, Y = [], []
-        # get scalar arguments from kwargs
+        cones = []
         for arg in args:
-            if isinstance(arg, Cone):
-                cones = [arg]
-            else:
-                cones = arg
-            for c in cones:
-                # plot on lower
-                angles = np.linspace(0, c.revangle, max(2, abs(int(c.revangle))))
-                x, y = self.proj.project_data(
-                    *np.array(
-                        [np.asarray(c.secant.rotate(c.axis, a)) for a in angles]
-                    ).T
-                )
-                X.append(np.hstack((x, np.nan)))
-                Y.append(np.hstack((y, np.nan)))
-                # plot on upper
-                x, y = self.proj.project_data(
-                    *np.array(
-                        [-np.asarray(c.secant.rotate(c.axis, a)) for a in angles]
-                    ).T
-                )
-                X.append(np.hstack((x, np.nan)))
-                Y.append(np.hstack((y, np.nan)))
-        handles = self.ax.plot(np.hstack(X), np.hstack(Y), **kwargs)
-        for h in handles:
-            h.set_clip_path(self.primitive)
-        return handles
+            cones.extend([arg] if isinstance(arg, Cone) else list(arg))
+        segments = []
+        for c in cones:
+            angles = np.linspace(0, c.revangle, max(2, abs(int(c.revangle))))
+            curve = np.array([np.asarray(c.secant.rotate(c.axis, a)) for a in angles])
+            segments.append(curve)
+            segments.append(np.full((1, 3), np.nan))
+            segments.append(-curve)
+            segments.append(np.full((1, 3), np.nan))
+        combined = np.vstack(segments)
+        return [self.ax.path(combined, antipodal=False, **kwargs)]
 
     def _confidence(self, *args, **kwargs):
         method = kwargs.pop("method")
         which = kwargs.pop("which")
         level = kwargs.pop("level")
         n_resamples = kwargs.pop("n_resamples")
-        X, Y = [], []
+        normalize = kwargs.pop("normalize")
+        anisoft = kwargs.pop("anisoft")
+        segments = []
         for arg in args:
-            if method == "bingham":
-                stats = arg.bingham_statistics(level=level, which=which)
+            if method == "jelinek":
+                if which not in (None, 0, 1, 2):
+                    raise ValueError("which must be 0, 1 or 2")
+                ellipses = arg.mean_tensor(
+                    level=level, normalize=normalize, anisoft=anisoft
+                )["ellipses"]
+                # all three principal axes unless a single one is selected
+                selected = ellipses if which is None else [ellipses[which]]
+                theta = np.linspace(0, 2 * np.pi, 181)
+                curves = []
+                for ell in selected:
+                    mu = np.asarray(ell["mu"])
+                    u = np.asarray(ell["axes"][0])
+                    v = np.asarray(ell["axes"][1])
+                    t0, t1 = np.tan(np.radians(ell["gamma"]))
+                    curve = (
+                        mu
+                        + (t0 * np.cos(theta))[:, None] * u
+                        + (t1 * np.sin(theta))[:, None] * v
+                    )
+                    curves.append(curve / np.linalg.norm(curve, axis=1)[:, None])
+                gap = np.full((1, 3), np.nan)
+                pts = curves[0]
+                for curve in curves[1:]:
+                    pts = np.vstack([pts, gap, curve])
+            elif method == "bingham":
+                stats = arg.bingham_statistics(
+                    level=level, which=0 if which is None else which
+                )
                 mu = np.asarray(stats["mu"])
                 u = np.asarray(stats["axes"][0])
                 v = np.asarray(stats["axes"][1])
@@ -948,18 +1023,12 @@ class StereoNet:
                 pts = np.array(
                     [np.asarray(secant.rotate(stats["mu"], a)) for a in angles]
                 )
-            # plot on lower
-            x, y = self.proj.project_data(*pts.T)
-            X.append(np.hstack((x, np.nan)))
-            Y.append(np.hstack((y, np.nan)))
-            # plot on upper
-            x, y = self.proj.project_data(*(-pts).T)
-            X.append(np.hstack((x, np.nan)))
-            Y.append(np.hstack((y, np.nan)))
-        handles = self.ax.plot(np.hstack(X), np.hstack(Y), **kwargs)
-        for h in handles:
-            h.set_clip_path(self.primitive)
-        return handles
+            segments.append(pts)
+            segments.append(np.full((1, 3), np.nan))
+            segments.append(-pts)
+            segments.append(np.full((1, 3), np.nan))
+        combined = np.vstack(segments)
+        return [self.ax.path(combined, antipodal=False, **kwargs)]
 
     def _pair(self, *args, **kwargs):
         line_marker = kwargs.pop("line_marker")
@@ -968,6 +1037,7 @@ class StereoNet:
             *[arg.lin for arg in args],
             marker=line_marker,
             ls="none",
+            color=h[0].get_color(),
             mfc=h[0].get_color(),
             mec=h[0].get_color(),
             ms=kwargs.get("ms"),
@@ -982,54 +1052,93 @@ class StereoNet:
             self._arrow(arg.lin, sense=arg.sense, **quiver_kwargs)
 
     def _hoeppner(self, *args, **kwargs):
+        pivot = kwargs.pop("pivot")
         h = self._point(*[arg.fol for arg in args], **kwargs)
         quiver_kwargs = apsg_conf.stereonet_arrow.copy()
+        quiver_kwargs["pivot"] = pivot
         quiver_kwargs["color"] = h[0].get_color()
         for arg in args:
-            self._arrow(arg.fol, arg.lin, sense=arg.sense, **quiver_kwargs)
+            if isinstance(arg, (Fault, FaultSet)):
+                self._arrow(arg.fol, arg.lin, sense=arg.sense, **quiver_kwargs)
+            else:
+                # Pair/PairSet: no movement sense, so no arrowhead -- a plain
+                # line through the planar symbol's center (pivot="middle").
+                line_kwargs = dict(
+                    quiver_kwargs, headwidth=0, headlength=0, headaxislength=0
+                )
+                self._arrow(arg.fol, arg.lin, sense=1, **line_kwargs)
+
+    def _fill_quadrants(self, quads, max_alpha, **kwargs):
+        """Fill each ``(arcset, outside)`` of ``quads`` with one color and one legend
+        entry, shared by ``dihedra`` and ``beachball``."""
+        if not quads:
+            return []
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = self.ax._get_lines.get_next_color()
+        label = kwargs.pop("label", None)
+        if kwargs.get("alpha") is None:  # keep overlaps of a large set readable
+            kwargs["alpha"] = min(max_alpha, 1.5 / len(quads))
+        handles = []
+        for arcs, outside in quads:
+            legend = {"label": label} if label is not None and not handles else {}
+            handles.extend(
+                self._arc_polygon(
+                    tuple(arcs), outside=outside, color=color, **legend, **kwargs
+                )
+            )
+        return handles
+
+    def _dihedra(self, *args, **kwargs):
+        faults = []
+        for arg in args:
+            faults.extend([arg] if isinstance(arg, Fault) else list(arg))
+        return self._fill_quadrants([_dihedra_arcs(f) for f in faults], 0.3, **kwargs)
+
+    def _beachball(self, *args, **kwargs):
+        stresses = []
+        for arg in args:
+            stresses.extend([arg] if isinstance(arg, Stress3) else list(arg))
+        quads = [q for q in map(_beachball_arcs, stresses) if q is not None]
+        return self._fill_quadrants(quads, 1.0, **kwargs)
 
     def _arrow(self, *args, **kwargs):
         sense = kwargs.pop("sense") * np.ones(
             np.atleast_2d(np.asarray(args[0])).shape[0]
         )
-        x_lower, y_lower = self.proj.project_data(
-            *np.vstack(np.atleast_2d(np.asarray(args[0]))).T
-        )
-        x_upper, y_upper = self.proj.project_data(
-            *(-np.vstack(np.atleast_2d(np.asarray(args[0]))).T)
-        )
-        x = np.hstack((x_lower, x_upper))
-        y = np.hstack((y_lower, y_upper))
-        sense = np.hstack((sense, sense))
+        x, y = self.ax.project(np.asarray(args[0]), clip_inside=True, fold=True)
         inside = ~np.isnan(x)
-        x = x[inside]
-        y = y[inside]
-        sense = sense[inside]
+        x, y, sense = x[inside], y[inside], sense[inside]
         if len(args) > 1:
-            x_lower, y_lower = self.proj.project_data(
-                *np.vstack(np.atleast_2d(np.asarray(args[1]))).T
-            )
-            x_upper, y_upper = self.proj.project_data(
-                *(-np.vstack(np.atleast_2d(np.asarray(args[1]))).T)
-            )
-            dx = np.hstack((x_lower, x_upper))
-            dy = np.hstack((y_lower, y_upper))
-            dx = dx[~np.isnan(dx)]
-            dy = dy[~np.isnan(dy)]
+            dx, dy = self.ax.project(np.asarray(args[1]), clip_inside=True, fold=True)
+            dx, dy = dx[~np.isnan(dx)], dy[~np.isnan(dy)]
         else:
             dx, dy = x, y
+        # dx, dy are axes-fraction coordinates, so they must be re-centered
+        # on the net's true-vertical reference point (the disk center
+        # (0.5, 0.5) only when the net is unrotated -- see
+        # ``vertical_axes_fraction``) before use as a direction.
+        cx, cy = self.ax.vertical_axes_fraction()
+        dx, dy = dx - cx, dy - cy
         mag = np.hypot(dx, dy)
         u, v = sense * dx / mag, sense * dy / mag
-        h = self.ax.quiver(x, y, u, v, **kwargs)
+        h = self.ax.quiver(x, y, u, v, transform=self.ax.transAxes, **kwargs)
         h.set_clip_path(self.primitive)
 
     def _tensor(self, *args, **kwargs):
+        # a set is drawn as one feature set per principal axis, so each axis gets
+        # a single legend entry
+        if isinstance(args[0], Tensor3):
+            fols = args[0].eigenfols()
+            lins = args[0].eigenlins()
+        else:
+            fols = [FoliationSet([t.eigenfols()[k] for t in args[0]]) for k in range(3)]
+            lins = [LineationSet([t.eigenlins()[k] for t in args[0]]) for k in range(3)]
         if kwargs.get("planes"):
             selkw = {
                 key: kwargs[key]
                 for key in kwargs.keys() & {"alpha", "ls", "lw", "label"}
             }
-            fols = args[0].eigenfols()
             if kwargs["color"] is None:
                 del kwargs["color"]
             self._great_circle(fols[0], color=kwargs.get("color", "red"), **selkw)
@@ -1038,10 +1147,10 @@ class StereoNet:
         else:
             selkw = {
                 key: kwargs[key]
-                for key in kwargs.keys() & {"alpha", "marker", "mew", "ms", "label"}
+                for key in kwargs.keys()
+                & {"alpha", "marker", "mec", "mew", "ms", "label"}
             }
             kwargs["ls"] = "none"
-            lins = args[0].eigenlins()
             if kwargs["color"] is None:
                 del kwargs["color"]
             if selkw["label"] != "_tensor":
@@ -1059,7 +1168,7 @@ class StereoNet:
     def _stress(self, *args, **kwargs):
         selkw = {
             key: kwargs[key]
-            for key in kwargs.keys() & {"alpha", "marker", "mew", "ms", "label"}
+            for key in kwargs.keys() & {"alpha", "marker", "mec", "mew", "ms", "label"}
         }
         lins = args[0].eigenlins()
         if kwargs["color"] is None:
@@ -1076,55 +1185,94 @@ class StereoNet:
             self._point(lins[1], color=kwargs.get("color", "green"), **selkw)
             self._point(lins[2], color=kwargs.get("color", "blue"), **selkw)
 
-    def _contour(self, *args, **kwargs):
-        method = kwargs.pop("method")
-        n_max = kwargs.pop("n_max")
-        sigma = kwargs.pop("sigma")
-        trimzero = kwargs.pop("trimzero")
-        sigmanorm = kwargs.pop("sigmanorm")
+    def _contour(self, grid, **kwargs):
         colorbar = kwargs.pop("colorbar")
+        colorbar_kws = kwargs.pop("colorbar_kws")
+        line_color = kwargs.pop("line_color")
         _ = kwargs.pop("label")
-        clines = kwargs.pop("clines")
-        linewidths = kwargs.pop("linewidths")
+        filled = kwargs.pop("filled")
+        linewidth = kwargs.pop("linewidth")
         linestyles = kwargs.pop("linestyles")
-        show_data = kwargs.pop("show_data")
-        data_kws = kwargs.pop("data_kws")
-        if not self.grid.calculated:
-            if len(args) > 0:
-                self.grid.calculate_density(
-                    args[0],
-                    method=method,
-                    n_max=n_max,
-                    sigma=sigma,
-                    sigmanorm=sigmanorm,
-                    trimzero=trimzero,
-                )
-            else:
-                return None
-        dcgrid = np.asarray(self.grid.grid).T
-        X, Y = self.proj.project_data(*dcgrid, clip_inside=False)
-        cf = self.ax.tricontourf(X, Y, self.grid.values, **kwargs)
-        cf.set_clip_path(self.primitive)
-        if clines:
-            kwargs["cmap"] = None
-            kwargs["colors"] = "k"
-            kwargs["linewidths"] = linewidths
+        # apsg_conf.stereonet_contour.clip defaults to True; when cmap isn't
+        # given explicitly, apsg's own default is "Greys" for that clipped
+        # (positive/above-uniform only) view, or "RdBu_r" (diverging, centered
+        # on 0, blue below/red above uniform) for the full range when
+        # clip=False is requested.
+        if kwargs.get("cmap") is None:
+            kwargs["cmap"] = "Greys" if kwargs.get("clip") else "RdBu_r"
+        if not filled:
+            # linewidths/linestyles are meaningless for filled contours
+            # (contourf ignores/warns about them) -- only forward for lines
+            kwargs["linewidths"] = linewidth
             kwargs["linestyles"] = linestyles
-            cl = self.ax.tricontour(X, Y, self.grid.values, **kwargs)
-            cl.set_clip_path(self.primitive)
-        if show_data:
-            artist = StereoNetArtistFactory.create_point(*args[0], **data_kws)
-            self._point(*artist.args, **artist.kwargs)
+        cf = self.ax.contour(grid=grid._engine, filled=filled, **kwargs)
+        if filled:
+            # also draw a black contour-line overlay on top of the fill,
+            # reusing the fill's own resolved levels so the lines land
+            # exactly on the fill boundaries
+            line_kwargs = dict(kwargs)
+            line_kwargs.pop("norm", None)
+            line_kwargs.pop("clip", None)
+            line_kwargs["cmap"] = None
+            line_kwargs["levels"] = cf.levels
+            line_kwargs["colors"] = line_color
+            line_kwargs["linewidths"] = linewidth
+            line_kwargs["linestyles"] = linestyles
+            self.ax.contour(grid=grid._engine, filled=False, **line_kwargs)
         if colorbar:
-            self.fig.colorbar(cf, ax=self.ax, shrink=0.5, anchor=(0.0, 0.3))
-        # plt.colorbar(cf, format="%3.2f", spacing="proportional")
+            self.fig.colorbar(cf, ax=self.ax, **colorbar_kws)
 
 
 def stereonetartist_from_json(obj_json):
+    if obj_json["factory"] == "create_contour":
+        # a contour artist's args[0] is a StereoGrid's own to_json shape
+        # (no "datatype" key), not a feature -- see StereoNet_Contour.to_json
+        grid = StereoGrid.from_json(obj_json["args"][0])
+        return StereoNetArtistFactory.create_contour(grid, **obj_json["kwargs"])
     args = tuple([feature_from_json(arg_json) for arg_json in obj_json["args"]])
     return getattr(StereoNetArtistFactory, obj_json["factory"])(
         *args, **obj_json["kwargs"]
     )
+
+
+def _quicknet_plot_one(s, arg, fol_as_pole, **kwargs):
+    """Plot a single ``quicknet()`` argument on ``s`` -- dispatches by type to
+    whichever ``StereoNet`` method has an artist representation for it,
+    accepting a single feature or its ``*Set`` counterpart alike. Order
+    matters: a subclass (``Fault`` vs ``Pair``, ``Lineation``/``Foliation``
+    vs ``Vector3``, ``Stress3`` vs ``Tensor3``, ``OrientationTensor3Set`` vs
+    ``EllipsoidSet``) is checked before its more general base class."""
+    if isinstance(arg, (Foliation, FoliationSet)):
+        (s.point if fol_as_pole else s.great_circle)(arg, **kwargs)
+    elif isinstance(arg, (Lineation, LineationSet)):
+        s.point(arg, **kwargs)
+    elif isinstance(arg, (Fault, FaultSet)):
+        s.fault(arg, **kwargs)
+    elif isinstance(arg, (Pair, PairSet)):
+        s.pair(arg, **kwargs)
+    elif isinstance(arg, (Cone, ConeSet)):
+        s.cone(arg, **kwargs)
+    elif isinstance(arg, (Arc, ArcSet)):
+        s.arc(arg, **kwargs)
+    elif isinstance(arg, Stress3):
+        s.stress(arg, **kwargs)
+    elif isinstance(arg, Stress3Set):
+        # .stress() only ever plots one Stress3 per call
+        for item in arg:
+            s.stress(item, **kwargs)
+    elif isinstance(arg, Tensor3):
+        s.tensor(arg, **kwargs)
+    elif isinstance(arg, EllipsoidSet):
+        # .tensor() only ever plots one Tensor3-like object per call;
+        # also matches OrientationTensor3Set (an EllipsoidSet subclass)
+        for item in arg:
+            s.tensor(item, **kwargs)
+    elif isinstance(arg, StereoGrid):
+        s.contour(arg, **kwargs)
+    elif isinstance(arg, (Vector3, Vector3Set)):
+        s.vector(arg, **kwargs)
+    else:
+        print(f"{type(arg)} not supported.")
 
 
 def quicknet(*args, **kwargs):
@@ -1132,9 +1280,15 @@ def quicknet(*args, **kwargs):
     Function to quickly show or save ``StereoNet`` from args
 
     Args:
-        args: object(s) to be plotted. Instaces of ``Vector3``, ``Foliation``,
-            ``Lineation``, ``Pair``, ``Fault``, ``Cone``, ``Vector3Set``,
-            ``FoliationSet``, ``LineationSet``, ``PairSet`` or ``FaultSet``.
+        args: object(s) to be plotted -- any type with a ``StereoNet`` artist
+            representation, or its ``*Set`` counterpart: ``Vector3``,
+            ``Foliation``, ``Lineation``, ``Pair``, ``Fault``, ``Cone``, ``Arc``,
+            ``Ellipsoid``, ``OrientationTensor3``, ``Stress3``, or a ``StereoGrid``.
+            A set whose method only accepts one object per call (``Stress3Set``,
+            ``EllipsoidSet``/``OrientationTensor3Set``) is plotted one artist
+            per item. ``scatter()``, ``confidence()``, ``arrow()`` and
+            ``hoeppner()`` need extra arguments/semantics beyond a single
+            object and remain reachable only via an explicit ``StereoNet`` call.
 
     Keyword Args:
         savefig (bool): True to save figure. Default `False`
@@ -1151,47 +1305,14 @@ def quicknet(*args, **kwargs):
     Returns:
         None: Quickly shows or saves a ``StereoNet`` figure from the provided arguments.
     """
-    savefig = kwargs.get("savefig", False)
-    filename = kwargs.get("filename", "stereonet.png")
-    savefig_kwargs = kwargs.get("savefig_kwargs", {})
-    fol_as_pole = kwargs.get("fol_as_pole", False)
+    savefig = kwargs.pop("savefig", False)
+    filename = kwargs.pop("filename", "stereonet.png")
+    savefig_kwargs = kwargs.pop("savefig_kwargs", {})
+    fol_as_pole = kwargs.pop("fol_as_pole", False)
     kwargs["label"] = kwargs.get("label", "_nolegend_")
     s = StereoNet(**kwargs)
     for arg in args:
-        if isinstance(arg, Vector3):
-            if isinstance(arg, Foliation):
-                if fol_as_pole:
-                    s.point(arg, **kwargs)
-                else:
-                    s.great_circle(arg, **kwargs)
-            elif isinstance(arg, Lineation):
-                s.point(arg, **kwargs)
-            else:
-                s.vector(arg, **kwargs)
-        elif isinstance(arg, Fault):
-            s.fault(arg, **kwargs)
-        elif isinstance(arg, Pair):
-            s.pair(arg, **kwargs)
-        elif isinstance(arg, Cone):
-            s.cone(arg, **kwargs)
-        elif isinstance(arg, Vector3Set):
-            if isinstance(arg, FoliationSet):
-                if fol_as_pole:
-                    s.point(arg, **kwargs)
-                else:
-                    s.great_circle(arg, **kwargs)
-            elif isinstance(arg, LineationSet):
-                s.point(arg, **kwargs)
-            else:
-                s.vector(arg, **kwargs)
-        elif isinstance(arg, FaultSet):
-            s.fault(arg, **kwargs)
-        elif isinstance(arg, PairSet):
-            s.pair(arg, **kwargs)
-        elif isinstance(arg, Stress3):
-            s.stress(arg, **kwargs)
-        else:
-            print(f"{type(arg)} not supported.")
+        _quicknet_plot_one(s, arg, fol_as_pole, **kwargs)
     if savefig:
         s.savefig(filename, **savefig_kwargs)
     else:

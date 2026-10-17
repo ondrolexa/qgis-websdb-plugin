@@ -9,10 +9,16 @@ from apsg.feature import feature_from_json
 from apsg.plotting._plot_artists import FabricPlotArtistFactory
 from apsg.plotting._styles import FabricPlotStyle
 
-__all__ = ["VollmerPlot", "RamsayPlot", "FlinnPlot", "HsuPlot"]
+__all__ = ["FlinnPlot", "HsuPlot", "RamsayPlot", "VollmerPlot"]
 
 
-class FabricPlot(object):
+def _flat(values):
+    """Join per-argument values (scalars or arrays) into one 1-D array, so that a
+    set is drawn with a single artist and a single legend entry."""
+    return np.concatenate([np.atleast_1d(v) for v in values])
+
+
+class FabricPlot:
     """
     Metaclas for Fabric plots
     """
@@ -36,7 +42,7 @@ class FabricPlot(object):
         """Return fabric plot as JSON dict."""
 
         artists = [artist.to_json() for artist in self._artists]
-        return dict(kwargs=self._kwargs, artists=artists)
+        return {"kwargs": self._kwargs, "artists": artists}
 
     @classmethod
     def from_json(cls, json_dict):
@@ -87,16 +93,16 @@ class FabricPlot(object):
         self._plot_artists()
         h, lbls = self.ax.get_legend_handles_labels()  # ty: ignore
         if h:
-            self._lgd = self.ax.legend(  # ty: ignore
-                h,
-                lbls,
-                prop={"size": 11},
-                borderaxespad=0,
-                loc="center left",
-                bbox_to_anchor=(1.1, 0.5),
-                scatterpoints=1,
-                numpoints=1,
-            )
+            legend_kwargs = {
+                "prop": {"size": 11},
+                "borderaxespad": 0,
+                "loc": "center left",
+                "bbox_to_anchor": (1.1, 0.5),
+                "scatterpoints": 1,
+                "numpoints": 1,
+            }
+            legend_kwargs.update(self._kwargs["legend_kws"])
+            self._lgd = self.ax.legend(h, lbls, **legend_kwargs)  # ty: ignore
         if self._kwargs["title"] is not None:
             self.fig.suptitle(self._kwargs["title"], **self._kwargs["title_kws"])
         if self._kwargs["tight_layout"]:
@@ -117,7 +123,8 @@ class FabricPlot(object):
     def show(self):
         """Show deformation plot."""
 
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         plt.show()
@@ -133,11 +140,12 @@ class FabricPlot(object):
         Returns:
             None: The figure is saved to the specified graphics file.
         """
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         self.fig.savefig(filename, **kwargs)
-        plt.close(0)
+        plt.close(self.fig)  # don't leave open for Jupyter's auto-display
 
     ########################################
     # STYLED PLOTTING                      #
@@ -179,6 +187,19 @@ class VollmerPlot(FabricPlot):
         grid (bool): Show grid. Default is True
         grid_color (str): Matplotlib color of the grid. Default "k"
         grid_style (str): Matplotlib style of the grid. Default ":"
+        border_color (color): Color of the triangle/axis border. Default "k"
+        border_lw (float): Line width of the triangle/axis border. Default 2
+        tick_color (color): Color of the ticks. Default "k"
+        tick_lw (float): Line width of the ticks. Default 1
+        label_fontsize (int): Font size of corner labels. Default 14
+        refline_color (color): Color of the reference diagonal (Ramsay/Flinn).
+            Default "k"
+        refline_lw (float): Line width of the reference diagonal (Ramsay/Flinn).
+            Default 0.5
+        background_color (color): Background fill color (Vollmer triangle).
+            Default "w"
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
 
     Examples:
         >>> l = linset.random_fisher(position=lin(120, 40))
@@ -212,17 +233,42 @@ class VollmerPlot(FabricPlot):
         self.ax.set_ylim(self.C[1] - margin, self.A[1] + margin)
 
         # projection triangle
-        bg = Polygon([self.A, self.B, self.C], color="w", edgecolor=None)
+        bg = Polygon(
+            [self.A, self.B, self.C],
+            color=self._kwargs["background_color"],
+            edgecolor=None,
+        )
         self.ax.add_patch(bg)
-        self.ax.plot(triangle[0], triangle[1], "k", lw=2)
+        self.ax.plot(
+            triangle[0],
+            triangle[1],
+            color=self._kwargs["border_color"],
+            lw=self._kwargs["border_lw"],
+        )
+        label_fontsize = self._kwargs["label_fontsize"]
         self.ax.text(
-            self.A[0] - 0.02, self.A[1], "P", ha="right", va="bottom", fontsize=14
+            self.A[0] - 0.02,
+            self.A[1],
+            "P",
+            ha="right",
+            va="bottom",
+            fontsize=label_fontsize,
         )
         self.ax.text(
-            self.B[0] + 0.02, self.B[1], "G", ha="left", va="bottom", fontsize=14
+            self.B[0] + 0.02,
+            self.B[1],
+            "G",
+            ha="left",
+            va="bottom",
+            fontsize=label_fontsize,
         )
         self.ax.text(
-            self.C[0], self.C[1] - 0.02, "R", ha="center", va="top", fontsize=14
+            self.C[0],
+            self.C[1] - 0.02,
+            "R",
+            ha="center",
+            va="top",
+            fontsize=label_fontsize,
         )
 
         if self._kwargs["grid"]:
@@ -254,25 +300,27 @@ class VollmerPlot(FabricPlot):
 
         # ticks
         if self._kwargs["ticks"]:
+            tick_color = self._kwargs["tick_color"]
+            tick_lw = self._kwargs["tick_lw"]
             r = np.linspace(0, 1, n + 1)
             tick = tick_size * (self.B - self.C) / n
             x = self.A[0] * (1 - r) + self.B[0] * r
             x = np.vstack((x, x + tick[0]))
             y = self.A[1] * (1 - r) + self.B[1] * r
             y = np.vstack((y, y + tick[1]))
-            self.ax.plot(x, y, "k", lw=1)
+            self.ax.plot(x, y, color=tick_color, lw=tick_lw)
             tick = tick_size * (self.C - self.A) / n
             x = self.B[0] * (1 - r) + self.C[0] * r
             x = np.vstack((x, x + tick[0]))
             y = self.B[1] * (1 - r) + self.C[1] * r
             y = np.vstack((y, y + tick[1]))
-            self.ax.plot(x, y, "k", lw=1)
+            self.ax.plot(x, y, color=tick_color, lw=tick_lw)
             tick = tick_size * (self.A - self.B) / n
             x = self.A[0] * (1 - r) + self.C[0] * r
             x = np.vstack((x, x + tick[0]))
             y = self.A[1] * (1 - r) + self.C[1] * r
             y = np.vstack((y, y + tick[1]))
-            self.ax.plot(x, y, "k", lw=1)
+            self.ax.plot(x, y, color=tick_color, lw=tick_lw)
 
     ########################################
     # PLOTTING METHODS                     #
@@ -310,9 +358,9 @@ class VollmerPlot(FabricPlot):
         self.ax.plot(x, y, **kwargs)
 
     def _point(self, *args, **kwargs):
-        P = [arg.P for arg in args]
-        G = [arg.G for arg in args]
-        R = [arg.R for arg in args]
+        P = _flat([arg.P for arg in args])
+        G = _flat([arg.G for arg in args])
+        R = _flat([arg.R for arg in args])
         self._triplot(P, G, R, **kwargs)
 
     def _path(self, *args, **kwargs):
@@ -325,7 +373,7 @@ class VollmerPlot(FabricPlot):
         if a < 0 or b < 0 or c < 0:
             return ""
         else:
-            return "P:{:0.2f} G:{:0.2f} R:{:0.2f}".format(a, b, c)
+            return f"P:{a:0.2f} G:{b:0.2f} R:{c:0.2f}"
 
 
 class RamsayPlot(FabricPlot):
@@ -343,6 +391,19 @@ class RamsayPlot(FabricPlot):
         grid (bool): Show grid. Default is True
         grid_color (str): Matplotlib color of the grid. Default "k"
         grid_style (str): Matplotlib style of the grid. Default ":"
+        border_color (color): Color of the triangle/axis border. Default "k"
+        border_lw (float): Line width of the triangle/axis border. Default 2
+        tick_color (color): Color of the ticks. Default "k"
+        tick_lw (float): Line width of the ticks. Default 1
+        label_fontsize (int): Font size of corner labels. Default 14
+        refline_color (color): Color of the reference diagonal (Ramsay/Flinn).
+            Default "k"
+        refline_lw (float): Line width of the reference diagonal (Ramsay/Flinn).
+            Default 0.5
+        background_color (color): Background fill color (Vollmer triangle).
+            Default "w"
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
 
     Examples:
         >>> l = linset.random_fisher(position=lin(120, 40))
@@ -377,7 +438,12 @@ class RamsayPlot(FabricPlot):
             mx = self.mx
         self.ax.set_xlim(0, mx)
         self.ax.set_ylim(0, mx)
-        self.ax.plot([0, mx], [0, mx], "k", lw=0.5)
+        self.ax.plot(
+            [0, mx],
+            [0, mx],
+            color=self._kwargs["refline_color"],
+            lw=self._kwargs["refline_lw"],
+        )
         box = self.ax.get_position()
         self.ax.set_position(
             [box.x0, box.y0, box.width * 0.8, box.height]  # ty: ignore
@@ -410,8 +476,8 @@ class RamsayPlot(FabricPlot):
     ########################################
 
     def _point(self, *args, **kwargs):
-        e23 = [arg.e23 for arg in args]
-        e12 = [arg.e12 for arg in args]
+        e23 = _flat([arg.e23 for arg in args])
+        e12 = _flat([arg.e12 for arg in args])
 
         self.ax.plot(e23, e12, **kwargs)
 
@@ -422,7 +488,7 @@ class RamsayPlot(FabricPlot):
     def format_coord(self, x, y):
         k = y / x if x > 0 else 0
         d = x**2 + y**2
-        return "k:{:0.2f} d:{:0.2f}".format(k, d)
+        return f"k:{k:0.2f} d:{d:0.2f}"
 
 
 class FlinnPlot(FabricPlot):
@@ -440,6 +506,19 @@ class FlinnPlot(FabricPlot):
         grid (bool): Show grid. Default is True
         grid_color (str): Matplotlib color of the grid. Default "k"
         grid_style (str): Matplotlib style of the grid. Default ":"
+        border_color (color): Color of the triangle/axis border. Default "k"
+        border_lw (float): Line width of the triangle/axis border. Default 2
+        tick_color (color): Color of the ticks. Default "k"
+        tick_lw (float): Line width of the ticks. Default 1
+        label_fontsize (int): Font size of corner labels. Default 14
+        refline_color (color): Color of the reference diagonal (Ramsay/Flinn).
+            Default "k"
+        refline_lw (float): Line width of the reference diagonal (Ramsay/Flinn).
+            Default 0.5
+        background_color (color): Background fill color (Vollmer triangle).
+            Default "w"
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
 
     Examples:
         >>> l = linset.random_fisher(position=lin(120, 40))
@@ -474,7 +553,12 @@ class FlinnPlot(FabricPlot):
             mx = self.mx
         self.ax.set_xlim(1, mx)
         self.ax.set_ylim(1, mx)
-        self.ax.plot([1, mx], [1, mx], "k", lw=0.5)
+        self.ax.plot(
+            [1, mx],
+            [1, mx],
+            color=self._kwargs["refline_color"],
+            lw=self._kwargs["refline_lw"],
+        )
         box = self.ax.get_position()
         self.ax.set_position(
             [box.x0, box.y0, box.width * 0.8, box.height]  # ty: ignore
@@ -507,8 +591,8 @@ class FlinnPlot(FabricPlot):
     ########################################
 
     def _point(self, *args, **kwargs):
-        Ryz = [arg.Ryz for arg in args]
-        Rxy = [arg.Rxy for arg in args]
+        Ryz = _flat([arg.Ryz for arg in args])
+        Rxy = _flat([arg.Rxy for arg in args])
 
         self.ax.plot(Ryz, Rxy, **kwargs)
 
@@ -519,7 +603,7 @@ class FlinnPlot(FabricPlot):
     def format_coord(self, x, y):
         K = (y - 1) / (x - 1) if x > 1 else 0
         D = np.sqrt((x - 1) ** 2 + (y - 1) ** 2)
-        return "K:{:0.2f} D:{:0.2f}".format(K, D)
+        return f"K:{K:0.2f} D:{D:0.2f}"
 
 
 class HsuPlot(FabricPlot):
@@ -537,6 +621,19 @@ class HsuPlot(FabricPlot):
         grid (bool): Show grid. Default is True
         grid_color (str): Matplotlib color of the grid. Default "k"
         grid_style (str): Matplotlib style of the grid. Default ":"
+        border_color (color): Color of the triangle/axis border. Default "k"
+        border_lw (float): Line width of the triangle/axis border. Default 2
+        tick_color (color): Color of the ticks. Default "k"
+        tick_lw (float): Line width of the ticks. Default 1
+        label_fontsize (int): Font size of corner labels. Default 14
+        refline_color (color): Color of the reference diagonal (Ramsay/Flinn).
+            Default "k"
+        refline_lw (float): Line width of the reference diagonal (Ramsay/Flinn).
+            Default 0.5
+        background_color (color): Background fill color (Vollmer triangle).
+            Default "w"
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
 
     Examples:
         >>> l = linset.random_fisher(position=lin(120, 40))
@@ -592,8 +689,8 @@ class HsuPlot(FabricPlot):
     ########################################
 
     def _point(self, *args, **kwargs):
-        lode = [arg.lode * np.pi / 6 for arg in args]
-        eoct = [arg.eoct for arg in args]
+        lode = _flat([arg.lode for arg in args]) * np.pi / 6
+        eoct = _flat([arg.eoct for arg in args])
 
         self.ax.plot(lode, eoct, **kwargs)
 

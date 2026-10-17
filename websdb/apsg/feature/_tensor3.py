@@ -5,6 +5,7 @@ import numpy as np
 from scipy import linalg as spla
 from scipy.spatial.transform import Rotation
 
+from apsg.config import apsg_conf, stress_sign
 from apsg.feature._geodata import Fault, Foliation, Lineation, Pair
 from apsg.feature._tensor2 import Ellipse
 from apsg.helpers._math import atand
@@ -63,12 +64,16 @@ class DeformationGradient3(Matrix3):
         return cls([[xx, xy, xz], [yx, yy, yz], [zx, zy, zz]])
 
     @classmethod
-    def from_ratios(cls, Rxy=1, Ryz=1):
+    def from_ratios(cls, Rxy=None, Rxz=None, Ryz=None) -> "DeformationGradient3":
         """Return isochoric ``DeformationGradient3`` tensor with axial stretches
-        defined by strain ratios. Default is identity tensor.
+        defined by strain ratios.
+
+        Exactly two of ``Rxy``, ``Rxz`` and ``Ryz`` must be given; the third
+        follows from ``Rxz = Rxy * Ryz``.
 
         Keyword Args:
             Rxy (float): XY strain ratio
+            Rxz (float): XZ strain ratio
             Ryz (float): YZ strain ratio
 
         Examples:
@@ -82,6 +87,12 @@ class DeformationGradient3(Matrix3):
         Returns:
             DeformationGradient3: isochoric ``DeformationGradient3`` tensor with axial stretches.
         """
+        if sum(v is not None for v in (Rxy, Rxz, Ryz)) != 2:
+            raise ValueError("Exactly two of Rxy, Rxz, Ryz must be provided.")
+        if Rxy is None:
+            Rxy = Rxz / Ryz
+        if Ryz is None:
+            Ryz = Rxz / Rxy
 
         assert Rxy >= 1, "Rxy must be greater than or equal to 1."
         assert Ryz >= 1, "Ryz must be greater than or equal to 1."
@@ -144,6 +155,63 @@ class DeformationGradient3(Matrix3):
         """
         return VelocityGradient3(spla.logm(np.asarray(self)) / time)
 
+    def flow_apophyses(self):
+        """
+        Return the flow apophyses as ``Lineation`` objects, ordered from the fabric
+        attractor (greatest eigenvalue) to the fabric repeller (least eigenvalue)
+        (Passchier, 1997; Davis and Titus, 2011).
+
+        Raises:
+            ValueError: if the deformation has complex eigenvalues, in which case no
+                real flow apophyses exist.
+
+        Returns:
+            tuple of Lineation: flow apophyses, ordered from fabric attractor to
+            fabric repeller.
+        """
+        try:
+            eigenvectors = self.eigenvectors()
+        except ValueError:
+            raise ValueError(
+                "no real flow apophysis — deformation has complex eigenvalues, Wk > 1"
+            ) from None
+        return tuple(Lineation(v) for v in eigenvectors)
+
+    @classmethod
+    def from_ellipsoid(cls, E, form="left", R=None) -> "DeformationGradient3":
+        """
+        Return ``DeformationGradient3`` recovered from a finite strain ellipsoid up
+        to a rotational ambiguity, as F = Q @ D @ R (form 'left'/'B', the Finger
+        tensor FFᵀ, e.g. from ``Ellipsoid.from_defgrad``) or F = R @ D @ Qᵗ (form
+        'right'/'C', the Green's tensor FᵗF), where Q and D come from the
+        eigendecomposition of E (Flinn, 1979; Davis and Titus, 2011).
+
+        Args:
+            E (Ellipsoid): finite strain ellipsoid.
+            form: 'left' or 'B' for the Finger tensor FFᵀ (default), 'right' or 'C'
+                  for the Green's tensor FᵗF.
+
+        Keyword Args:
+            R (Rotation3): rotation resolving the ambiguity, to be determined from
+                independent data (e.g. paleomagnetic vectors or a known shear-plane
+                orientation). Default None gives the simplest, purely coaxial
+                solution F = Q @ D @ Qᵗ (a symmetric stretch, no rotation).
+
+        Returns:
+            DeformationGradient3: recovered ``DeformationGradient3``.
+        """
+        if form not in ("left", "B", "right", "C"):
+            raise TypeError("Wrong form argument")
+        Q = np.column_stack(E.eigenvectors())
+        D = np.diag(np.sqrt(E.eigenvalues()))
+        if R is None:
+            # symmetric, so the left and right forms coincide
+            return cls(Q @ D @ Q.T)
+        if form in ("left", "B"):
+            return cls(Q @ D @ np.asarray(R))
+        else:
+            return cls(np.asarray(R) @ D @ Q.T)
+
 
 class Rotation3(DeformationGradient3):
     """
@@ -163,10 +231,16 @@ class Rotation3(DeformationGradient3):
             raise TypeError("Not valid arguments for Rotation3")
         # fix improper rotations
         if np.allclose(-1, np.linalg.det(self)):
-            U, S, Vt = np.linalg.svd(self)
+            U, _S, Vt = np.linalg.svd(self)
             # Ensure a proper rotation (det=1)
             coefs = U @ np.diag([1, 1, np.linalg.det(U @ Vt)]) @ Vt
             self._coefs = tuple(coefs[0]), tuple(coefs[1]), tuple(coefs[2])
+
+    def _derive(self, coefs):
+        # products such as R @ F or R + R are rotations only when orthogonal
+        if np.allclose(np.dot(np.transpose(coefs), coefs), np.eye(3)):
+            return type(self)._from_canonical(coefs)
+        return DeformationGradient3._from_canonical(coefs)
 
     def axisangle(self):
         """Return rotation as (axis, angle) tuple."""
@@ -229,8 +303,10 @@ class Rotation3(DeformationGradient3):
         """
         try:
             p = Pair(p)
-        except Exception:
-            raise TypeError("Unsupported argument for from_pair. Expecting Pair")
+        except Exception as err:
+            raise TypeError(
+                "Unsupported argument for from_pair. Expecting Pair"
+            ) from err
         return cls(
             np.asarray(
                 [
@@ -257,10 +333,10 @@ class Rotation3(DeformationGradient3):
         """
         try:
             vector = Vector3(vector)
-        except Exception:
+        except Exception as err:
             raise TypeError(
                 "Unsupported argument for from_axisangle. Expecting Vector3"
-            )
+            ) from err
         rotvec = theta * np.array(vector.uv())
         return cls(Rotation.from_rotvec(rotvec, degrees=True).as_matrix())
 
@@ -281,17 +357,69 @@ class Rotation3(DeformationGradient3):
         """
         try:
             v1 = Vector3(v1)
-        except Exception:
+        except Exception as err:
             raise TypeError(
                 "Unsupported first argument for from_two_vectors. Expecting Vector3"
-            )
+            ) from err
         try:
             v2 = Vector3(v2)
-        except Exception:
+        except Exception as err:
             raise TypeError(
                 "Unsupported second argument for from_two_vectors. Expecting Vector3"
-            )
+            ) from err
         return cls.from_axisangle(v1.cross(v2), v1.angle(v2))
+
+    @staticmethod
+    def axisangle_from_vectors_axis(v1, v2, a):
+        """
+        Return the (axis, theta) pair used to rotate vector v1 to v2 around
+        (an adjustment of) axis a.
+
+        If v1.angle(a) is not equal to v2.angle(b), the minimum adjustment of rotation
+        axis is done automatically.
+
+        This is exposed separately from ``from_vectors_axis`` so that callers building
+        a continuous rotation path (e.g. a family ``from_axisangle(axis, t * theta)``
+        for ``t`` in ``[0, 1]``) can use the signed axis/angle directly, without
+        re-deriving them from the composed rotation matrix -- which is lossy exactly
+        when the rotation angle is 180 degrees, since ``axis`` and ``-axis`` then
+        produce an identical matrix.
+
+        Args:
+            v1: ``Vector3`` like object
+            v2: ``Vector3`` like object
+            a: estimated rotation axis ``Vector3`` like object
+
+        Returns:
+            tuple: ``(axis, theta)`` such that
+            ``v1.transform(Rotation3.from_axisangle(axis, theta)) == v2``.
+        """
+        try:
+            v1 = Vector3(v1)
+        except Exception as err:
+            raise TypeError(
+                "Unsupported first argument for axisangle_from_vectors_axis. Expecting Vector3"
+            ) from err
+        try:
+            v2 = Vector3(v2)
+        except Exception as err:
+            raise TypeError(
+                "Unsupported second argument for axisangle_from_vectors_axis. Expecting Vector3"
+            ) from err
+        try:
+            a = Vector3(a)
+        except Exception as err:
+            raise TypeError(
+                "Unsupported third argument for axisangle_from_vectors_axis. Expecting Vector3"
+            ) from err
+        n = v1.cross(v2).cross(v1.slerp(v2, 0.5))
+        a_fix = a.reject(n).normalized()
+        v1p = v1.reject(a_fix)
+        v2p = v2.reject(a_fix)
+        theta = v1p.angle(v2p)
+        if v1p.cross(v2p).dot(a_fix) < 0:
+            theta = -theta
+        return a_fix, theta
 
     @classmethod
     def from_vectors_axis(cls, v1, v2, a):
@@ -321,29 +449,8 @@ class Rotation3(DeformationGradient3):
         Returns:
             Rotation3: ``Rotation3`` representing rotation of vector v1 to v2 around axis a.
         """
-        try:
-            v1 = Vector3(v1)
-        except Exception:
-            raise TypeError(
-                "Unsupported first argument for from_vectors_axis. Expecting Vector3"
-            )
-        try:
-            v2 = Vector3(v2)
-        except Exception:
-            raise TypeError(
-                "Unsupported second argument for from_vectors_axis. Expecting Vector3"
-            )
-        try:
-            a = Vector3(a)
-        except Exception:
-            raise TypeError(
-                "Unsupported third argument for from_vectors_axis. Expecting Vector3"
-            )
-        n = v1.cross(v2).cross(v1.slerp(v2, 0.5))
-        a_fix = a.reject(n).normalized()
-        v1p = v1.reject(a_fix)
-        v2p = v2.reject(a_fix)
-        return cls.from_axisangle(a_fix, v1p.angle(v2p))
+        axis, theta = cls.axisangle_from_vectors_axis(v1, v2, a)
+        return cls.from_axisangle(axis, theta)
 
     @classmethod
     def from_two_pairs(cls, p1, p2, symmetry=False):
@@ -378,7 +485,7 @@ class Rotation3(DeformationGradient3):
                 cls(cls.from_pair(Pair(p2.fvec, -p2.lvec)) @ cls.from_pair(p1).I),
                 cls(cls.from_pair(Pair(-p2.fvec, -p2.lvec)) @ cls.from_pair(p1).I),
             ]
-            axes, angles = zip(*[R.axisangle() for R in R4])
+            _axes, angles = zip(*[R.axisangle() for R in R4])
             angles = [abs(a) for a in angles]
             ix = angles.index(min(angles))
             return R4[ix]
@@ -412,7 +519,8 @@ class Rotation3(DeformationGradient3):
 
         geo_mag = GeoMag(high_resolution=True)
         if year is None:
-            year = datetime.now().year + datetime.now().month / 12
+            now = datetime.now()  # noqa: DTZ005
+            year = now.year + now.month / 12
         result = geo_mag.calculate(
             glat=lat, glon=lon, alt=0, time=year, allow_date_outside_lifespan=True
         )
@@ -544,6 +652,46 @@ class VelocityGradient3(Matrix3):
 
         return type(self)((self - self.T) / 2)
 
+    @property
+    def vorticity_vector(self) -> Vector3:
+        """Return the vorticity vector w̄ = curl(ẏ) (Means et al., 1980)."""
+        W = self.spin()
+        return Vector3(2 * W.zy, 2 * W.xz, 2 * W.yx)
+
+    @property
+    def vorticity_scalar(self) -> float:
+        """Return the vorticity scalar, the magnitude of the vorticity vector (Means et al., 1980)."""
+        return abs(self.vorticity_vector)
+
+    @property
+    def kinematic_vorticity(self) -> float:
+        """Return the kinematic vorticity number Wk = ``|W|/|S|`` (Truesdell, 1953; Means et al., 1980)."""
+        S = np.linalg.norm(np.asarray(self.rate()))
+        W = np.linalg.norm(np.asarray(self.spin()))
+        return W / S if S != 0 else float("inf")
+
+    def flow_apophyses(self):
+        """
+        Return the flow apophyses as ``Lineation`` objects, ordered from the fabric
+        attractor (greatest eigenvalue) to the fabric repeller (least eigenvalue)
+        (Passchier, 1997; Davis and Titus, 2011).
+
+        Raises:
+            ValueError: if the deformation has complex eigenvalues, in which case no
+                real flow apophyses exist.
+
+        Returns:
+            tuple of Lineation: flow apophyses, ordered from fabric attractor to
+            fabric repeller.
+        """
+        try:
+            eigenvectors = self.eigenvectors()
+        except ValueError:
+            raise ValueError(
+                "no real flow apophysis — deformation has complex eigenvalues, Wk > 1"
+            ) from None
+        return tuple(Lineation(v) for v in eigenvectors)
+
 
 class Tensor3(Matrix3):
     @property
@@ -599,21 +747,23 @@ class Stress3(Tensor3):
     """
     The class to represent 3D stress tensor.
 
-    Uses the geosciences and rock-mechanics sign convention: normal stress
-    is positive for compression and negative for tension (the opposite of
-    the continuum-mechanics convention). The real eigenvalues of the stress
-    tensor are what we call the principal stresses. There are 3 of these in
-    3D, available as properties E1, E2, and E3 in descending order of
-    magnitude, with orientations available as properties V1, V2 and V3.
-    Because compressive stresses are positive here, E1 is directly the
-    greatest (most compressive) principal stress and E3 the least
-    (most tensile).
+    Sign convention is set by ``apsg_conf.stress_convention``. The default
+    ``"geological"`` convention is compression positive (normal stress is
+    positive for compression, the opposite of the continuum-mechanics
+    convention). ``"mechanical"`` is tension positive. The constructor, the
+    ``from_*`` methods and all reported values (principal stresses, invariants,
+    normal stress, eigenvalues, ``repr``) follow the active convention. The
+    internal matrix, returned by ``np.asarray()``, indexing and ``to_json()``,
+    is always the mechanical (tension-positive) one.
 
-    Note: Stress tensor has special properties sigma1, sigma2 and sigma3
-    to follow common geological terminology - they map directly to E1, E2
-    and E3: sigma1 is the greatest (most compressive) principal stress
-    while sigma3 is the least (most tensile). Their orientation could be
-    accessed with properties sigma1dir, sigma2dir and sigma3dir.
+    There are 3 principal stresses, available as properties E1, E2 and E3 with
+    orientations V1, V2 and V3. They are ordered from most compressive: E1
+    (also ``sigma1``) is the most compressive, E3 (``sigma3``) the least
+    compressive (most tensile).
+
+    The traction vector of ``cauchy()`` and ``stress_comp()`` is the physical
+    (tension-positive) Cauchy traction, ``σ·n``, in both conventions.
+    ``fault()`` is built from that traction and is convention-independent.
 
     Args:
         a (3x3 array_like): Input data, that can be converted to
@@ -622,6 +772,41 @@ class Stress3(Tensor3):
     Examples:
         >>> S = stress([[8, 0, 0],[0, 5, 0],[0, 0, 1]])
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # public input is in the active convention, stored internally as mechanical
+        sign = stress_sign()
+        self._coefs = tuple(tuple(sign * float(v) for v in row) for row in self._coefs)
+
+    @classmethod
+    def _from_canonical(cls, coefs, **kwargs):
+        obj = cls.__new__(cls)
+        Matrix3.__init__(obj, coefs, **kwargs)
+        return obj
+
+    def __repr__(self):
+        n = apsg_conf.ndigits
+        return f"{self.label()}\n{(stress_sign() * np.asarray(self)).round(n)!s}"
+
+    def to_json(self):
+        obj = super().to_json()
+        obj["stress_convention"] = "mechanical"
+        return obj
+
+    def _component(self, i, j):
+        return stress_sign() * self._coefs[i][j]
+
+    @property
+    def _eig(self):
+        # cache the canonical decomposition (ascending, so E1 is the most
+        # compressive); the convention sign is applied on every access
+        if "eig" not in self._cache:
+            evals, evecs = np.linalg.eigh(np.asarray(self._coefs, dtype=float))
+            evals[np.isclose(evals, np.zeros_like(evals))] = 0
+            self._cache["eig"] = evals, evecs
+        evals, evecs = self._cache["eig"]
+        return stress_sign() * evals, evecs
 
     @classmethod
     def from_comp(cls, **kwargs):
@@ -655,10 +840,11 @@ class Stress3(Tensor3):
     @classmethod
     def from_ratio(cls, r=0.5, mag=1):
         """
-        Return ``Stress`` tensor with given shape ration.
+        Return ``Stress`` tensor with given stress ratio.
 
         Keyword Args:
-            r (float): shape ratio between 0 and 1. Default 0.5
+            r (float): stress ratio R = (σ2 - σ3) / (σ1 - σ3) between 0 and 1.
+                Default 0.5
             mag (float): magnitude of differential stress. Default 1.
 
         Examples:
@@ -666,15 +852,16 @@ class Stress3(Tensor3):
             >>> S
             Stress3
             [[ 5.   0.   0. ]
-             [ 0.   2.5  0. ]
+             [ 0.  -2.5  0. ]
              [ 0.   0.  -5. ]]
 
         Returns:
-            Stress3: ``Stress`` tensor with given shape ration.
+            Stress3: ``Stress`` tensor with given stress ratio.
         """
 
         xx = mag / 2
-        yy = xx - r * mag
+        # sigma2 placed so that (σ2 - σ3) / (σ1 - σ3) == r in either convention
+        yy = stress_sign() * (xx - r * mag)
         zz = -mag / 2
         return cls([[xx, 0, 0], [0, yy, 0], [0, 0, zz]])
 
@@ -694,7 +881,7 @@ class Stress3(Tensor3):
     def deviatoric(self):
         """A stress deviator tensor component."""
 
-        return type(self)(self - self.hydrostatic)
+        return self - self.hydrostatic
 
     def effective(self, fp):
         """
@@ -707,7 +894,8 @@ class Stress3(Tensor3):
             Stress3: effective stress tensor reduced by fluid pressure.
         """
 
-        return type(self)(self - fp * Stress3())
+        # Terzaghi: pore pressure reduces compression, i.e. adds to tension
+        return self._derive(np.asarray(self) + fp * np.eye(3))
 
     @property
     def sigma1(self):
@@ -767,7 +955,7 @@ class Stress3(Tensor3):
     def I1(self):
         """First invariant."""
 
-        return float(np.trace(self))
+        return stress_sign() * float(np.trace(self))
 
     @property
     def I2(self):
@@ -779,7 +967,7 @@ class Stress3(Tensor3):
     def I3(self):
         """Third invariant."""
 
-        return self.det
+        return stress_sign() * self.det
 
     @property
     def diagonalized(self):
@@ -792,7 +980,8 @@ class Stress3(Tensor3):
 
     def cauchy(self, n):
         """
-        Return stress vector associated with plane given by normal vector.
+        Return physical (tension-positive) Cauchy traction vector ``σ·n`` on
+        plane given by normal vector, independent of ``stress_convention``.
 
         Args:
             n: normal given as ``Vector3`` or ``Foliation`` object
@@ -800,10 +989,10 @@ class Stress3(Tensor3):
         Examples:
             >>> S = stress.from_comp(xx=5, yy=2, zz=-10, xy=1)
             >>> S.cauchy(fol(160, 30))
-            Vector3(2.178, 0.128, -8.66)
+            Vector3(-2.178, -0.128, 8.66)
 
         Returns:
-            Vector3: stress vector associated with plane given by normal vector.
+            Vector3: physical traction vector on plane given by normal vector.
         """
 
         return Vector3(np.dot(self, n.normalized()))
@@ -824,15 +1013,18 @@ class Stress3(Tensor3):
             Fault: ``Fault`` object derived from given by normal vector.
         """
 
-        sn, tau = self.stress_comp(n)
-        return Fault(n.normalized(), tau.normalized())
+        _sn, tau = self.stress_comp(n)
+        # slip follows the shear traction acting on the hanging wall, which
+        # is minus the physical traction on the footwall-pointing normal
+        return Fault(n.normalized(), (-tau).normalized())
 
     def stress_comp(self, n):
-        """Return normal and shear stress ``Vector3`` components on plane given
-        by normal vector.
+        """Return normal and shear traction ``Vector3`` components on plane given
+        by normal vector, in the physical (tension-positive) sign convention
+        of ``cauchy()``.
 
         Returns:
-            tuple: normal and shear stress ``Vector3`` components.
+            tuple: normal and shear traction ``Vector3`` components.
         """
 
         t = self.cauchy(n)
@@ -842,12 +1034,14 @@ class Stress3(Tensor3):
 
     def normal_stress(self, n):
         """Return normal stress magnitude on plane given by normal vector.
+        Follows ``apsg_conf.stress_convention``: positive for compression
+        with the default ``"geological"`` convention.
 
         Returns:
             float: normal stress magnitude on plane given by normal vector.
         """
 
-        return float(np.dot(n, self.cauchy(n)))
+        return stress_sign() * float(np.dot(n.normalized(), self.cauchy(n)))
 
     def shear_stress(self, n):
         """Return shear stress magnitude on plane given by normal vector.
@@ -856,7 +1050,7 @@ class Stress3(Tensor3):
             float: shear stress magnitude on plane given by normal vector.
         """
 
-        sn, tau = self.stress_comp(n)
+        _sn, tau = self.stress_comp(n)
         return abs(tau)
 
     def slip_tendency(self, n, fp=0, log=False):
@@ -900,9 +1094,14 @@ class Stress3(Tensor3):
         return np.where(np.isclose(denom, 0), np.nan, (Se.sigma1 - sn) / denom)
 
     @property
-    def shape_ratio(self):
-        """Return shape ratio R (Gephart & Forsyth 1984)."""
-        return float((self.sigma1 - self.sigma2) / (self.sigma1 - self.sigma3))
+    def stress_ratio(self):
+        """Return stress ratio R = (σ2 - σ3) / (σ1 - σ3).
+
+        Structural geology definition: R = 0 for σ2 = σ3 (prolate) and
+        R = 1 for σ2 = σ1 (oblate). Note that the seismological definition
+        (σ1 - σ2) / (σ1 - σ3) equals 1 - R.
+        """
+        return float((self.sigma2 - self.sigma3) / (self.sigma1 - self.sigma3))
 
 
 class Ellipsoid(Tensor3):
@@ -957,6 +1156,32 @@ class Ellipsoid(Tensor3):
     def from_stretch(cls, x=1, y=1, z=1, **kwargs) -> "Ellipsoid":
         """Return diagonal tensor defined by magnitudes of principal stretches."""
         return cls([[x * x, 0, 0], [0, y * y, 0], [0, 0, z * z]], **kwargs)
+
+    @classmethod
+    def from_ratios(cls, Rxy=None, Rxz=None, Ryz=None, **kwargs) -> "Ellipsoid":
+        """
+        Return diagonal tensor of unit volume (x*y*z=1) defined by axial ratios.
+
+        Exactly two of ``Rxy``, ``Rxz`` and ``Ryz`` must be given; the third
+        follows from ``Rxz = Rxy * Ryz``.
+
+        Keyword Args:
+            Rxy (float): x/y ratio
+            Rxz (float): x/z ratio
+            Ryz (float): y/z ratio
+        """
+        if sum(v is not None for v in (Rxy, Rxz, Ryz)) != 2:
+            raise ValueError("Exactly two of Rxy, Rxz, Ryz must be provided.")
+        if Rxy is None:
+            Rxy = Rxz / Ryz
+        if Ryz is None:
+            Ryz = Rxz / Rxy
+
+        assert Rxy >= 1, "Rxy must be greater than or equal to 1."
+        assert Ryz >= 1, "Ryz must be greater than or equal to 1."
+
+        y = (Ryz / Rxy) ** (1 / 3)
+        return cls.from_stretch(y * Rxy, y, y / Ryz, **kwargs)
 
     @property
     def kind(self) -> str:
@@ -1086,6 +1311,25 @@ class Ellipsoid(Tensor3):
         )
 
     @property
+    def P_j(self) -> float:
+        """Return the corrected anisotropy degree (Jelínek, 1981)."""
+        eta = (self.e1 + self.e2 + self.e3) / 3
+        return math.exp(
+            math.sqrt(
+                2 * ((self.e1 - eta) ** 2 + (self.e2 - eta) ** 2 + (self.e3 - eta) ** 2)
+            )
+        )
+
+    @property
+    def T(self) -> float:
+        """Return the shape parameter (Jelínek, 1981)."""
+        return (
+            (2 * self.e2 - self.e1 - self.e3) / (self.e1 - self.e3)
+            if (self.e1 - self.e3) > 0
+            else 0
+        )
+
+    @property
     def P(self) -> float:
         """Point index (Vollmer, 1990)."""
 
@@ -1156,6 +1400,16 @@ class Ellipsoid(Tensor3):
         fol = Foliation(f)
         P = np.array([fol.dipvec(), fol.rake(0)]).T
         return Ellipse(P.T @ np.asarray(self) @ P)
+
+    def defgrad(self, form="left", R=None) -> "DeformationGradient3":
+        """
+        Return ``DeformationGradient3`` recovered from this ellipsoid, inverse of
+        ``Ellipsoid.from_defgrad``.
+
+        See Also:
+            DeformationGradient3.from_ellipsoid
+        """
+        return DeformationGradient3.from_ellipsoid(self, form=form, R=R)
 
 
 class OrientationTensor3(Ellipsoid):

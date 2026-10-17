@@ -25,6 +25,9 @@ from apsg import StereoNet, apsg_conf, fol, folset, lin, linset
 
 apsg_conf.dpi = 100
 
+# fixed left margin of the stereonet in pixels, kept on figure resize
+NET_LEFT_MARGIN = 40
+
 
 FORM_CLASS, _ = uic.loadUiType(
     os.path.join(os.path.dirname(__file__), "ui/websdb_plot.ui")
@@ -38,12 +41,21 @@ class MyMplCanvas(FigureCanvas):
         self.net = StereoNet()
         self.net.init_figure()
         super(MyMplCanvas, self).__init__(self.net.fig)
+        self.mpl_connect("resize_event", lambda event: self.pin_net_left())
         self.setParent(parent)
         super(MyMplCanvas, self).setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Expanding,
         )
         super(MyMplCanvas, self).updateGeometry()
+
+    def pin_net_left(self):
+        """Keep the net at a fixed distance from the left edge of the figure,
+        so extra width goes to the right side instead of the left margin."""
+        if getattr(self.net, "ax", None) is None:
+            return
+        self.net.ax.set_anchor("W")
+        self.figure.subplots_adjust(left=NET_LEFT_MARGIN / self.figure.bbox.width)
 
 
 class WebSDBPlotDialog(QtWidgets.QDialog, FORM_CLASS):
@@ -75,7 +87,7 @@ class WebSDBPlotDialog(QtWidgets.QDialog, FORM_CLASS):
     def plotnet(self):
         self._init_canvas()
         self.net.clear()
-        self.net._kwargs["overlay"] = self.checkGrid.isChecked()
+        self.net._kwargs["grid"] = self.checkGrid.isChecked()
         for idx, layer in self.data_layers[::-1]:
             if layer.selectedFeatureCount():
                 features = layer.getSelectedFeatures()
@@ -94,13 +106,13 @@ class WebSDBPlotDialog(QtWidgets.QDialog, FORM_CLASS):
             label = repr(g) if self.checkLabels.isChecked() else ""
             if self.opt(idx, QtWidgets.QCheckBox, "checkContours").isChecked():
                 nlevels = self.opt(idx, QtWidgets.QSpinBox, "spinLevels").value()
-                n_max = self.opt(idx, QtWidgets.QSpinBox, "spinResolution").value() * 2
                 self.net.contour(
                     g,
+                    method="kamb",
                     levels=nlevels,
-                    n_max=n_max,
+                    sigma=self.opt(idx, QtWidgets.QDoubleSpinBox, "spinSigma").value(),
                     colorbar=self.checkLabels.isChecked(),
-                    clines=self.opt(
+                    filled=not self.opt(
                         idx, QtWidgets.QCheckBox, "checkContourLines"
                     ).isChecked(),
                 )
@@ -130,4 +142,5 @@ class WebSDBPlotDialog(QtWidgets.QDialog, FORM_CLASS):
 
         self.net.fig.clear()
         self.net._render()
+        self.canvas.pin_net_left()
         self.canvas.draw()

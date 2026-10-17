@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.1 - 2026-10-18
+
+- Updated vendored APSG to 2.0.6 (new stereonet engine; contour densities are now in standard
+  deviations above random).
+- Stereonet contours now use the Kamb method; replaced the contour "Resolution" setting
+  with "Sigma" (Kamb smoothing, default 3.0).
+
 ## 1.0.0 - 2026-08-03
 
 - Refactored the plugin to read/write structural geology data over the WebSDB REST API instead of

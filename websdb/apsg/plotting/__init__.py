@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 from apsg.plotting._fabricplot import FlinnPlot, HsuPlot, RamsayPlot, VollmerPlot
 from apsg.plotting._plot_artists import (
     FabricPlotArtistFactory,
@@ -7,6 +5,7 @@ from apsg.plotting._plot_artists import (
     StereoNetArtistFactory,
 )
 from apsg.plotting._roseplot import RosePlot
+from apsg.plotting._stereo_engine import rotation_from_axis_angle
 from apsg.plotting._stereogrid import StereoGrid
 from apsg.plotting._stereonet import StereoNet, quicknet
 from apsg.plotting._styles import (
@@ -16,18 +15,19 @@ from apsg.plotting._styles import (
 )
 
 __all__ = (
-    "StereoNet",
-    "StereoGrid",
-    "RosePlot",
-    "VollmerPlot",
-    "RamsayPlot",
+    "FabricPlotArtistFactory",
+    "FabricPlotStyleFactory",
     "FlinnPlot",
     "HsuPlot",
-    "quicknet",
-    "StereoNetArtistFactory",
+    "RamsayPlot",
+    "RosePlot",
     "RosePlotArtistFactory",
-    "FabricPlotArtistFactory",
-    "StereoNetStyleFactory",
     "RosePlotStyleFactory",
-    "FabricPlotStyleFactory",
+    "StereoGrid",
+    "StereoNet",
+    "StereoNetArtistFactory",
+    "StereoNetStyleFactory",
+    "VollmerPlot",
+    "quicknet",
+    "rotation_from_axis_angle",
 )

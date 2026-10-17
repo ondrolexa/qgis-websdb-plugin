@@ -1,6 +1,10 @@
-# -*- coding: utf-8 -*-
-
 from apsg.config import apsg_conf, apsg_conf_context
+from apsg.feature import (
+    Arc as arc,
+)
+from apsg.feature import (
+    ArcSet as arcset,
+)
 from apsg.feature import (
     ClusterSet as cluster,
 )
@@ -81,6 +85,9 @@ from apsg.feature import (
     Stress2 as stress2,
 )
 from apsg.feature import (
+    Stress2Set as stress2set,
+)
+from apsg.feature import (
     Stress3 as stress,
 )
 from apsg.feature import (
@@ -122,6 +129,7 @@ from apsg.plotting import (
     StereoNet,
     VollmerPlot,
     quicknet,
+    rotation_from_axis_angle,
 )
 from apsg.plotting import (
     RosePlotStyleFactory as roseplot_styles,
@@ -131,58 +139,62 @@ from apsg.plotting import (
 )
 
 __all__ = (
-    "apsg_conf",
-    "apsg_conf_context",
-    "stereonet_styles",
-    "roseplot_styles",
-    "fabricplot_styles",
-    "vec",
-    "vec2",
-    "matrix",
-    "matrix2",
-    "dir2",
-    "lin",
-    "fol",
-    "pair",
-    "fault",
-    "cone",
-    "vecset",
-    "vec2set",
-    "dir2set",
-    "linset",
-    "folset",
-    "pairset",
-    "faultset",
-    "coneset",
-    "ellipseset",
-    "ellipsoidset",
-    "ortensor2set",
-    "ortensorset",
-    "stressset",
-    "cluster",
+    "FlinnPlot",
     "G",
-    "defgrad",
-    "rotation",
-    "velgrad",
-    "stress",
-    "ellipsoid",
-    "ortensor",
-    "defgrad2",
-    "rotation2",
-    "velgrad2",
-    "stress2",
-    "ellipse",
-    "ortensor2",
+    "HsuPlot",
+    "RamsayPlot",
+    "RosePlot",
     "StereoGrid",
     "StereoNet",
-    "RosePlot",
     "VollmerPlot",
-    "RamsayPlot",
-    "FlinnPlot",
-    "HsuPlot",
+    "apsg_conf",
+    "apsg_conf_context",
+    "arc",
+    "arcset",
+    "cluster",
+    "cone",
+    "coneset",
+    "defgrad",
+    "defgrad2",
+    "dir2",
+    "dir2set",
+    "ellipse",
+    "ellipseset",
+    "ellipsoid",
+    "ellipsoidset",
+    "fabricplot_styles",
+    "fault",
+    "faultset",
+    "fol",
+    "folset",
+    "lin",
+    "linset",
+    "matrix",
+    "matrix2",
+    "ortensor",
+    "ortensor2",
+    "ortensor2set",
+    "ortensorset",
+    "pair",
+    "pairset",
     "quicknet",
+    "roseplot_styles",
+    "rotation",
+    "rotation2",
+    "rotation_from_axis_angle",
+    "stereonet_styles",
+    "stress",
+    "stress2",
+    "stress2set",
+    "stressset",
+    "vec",
+    "vec2",
+    "vec2set",
+    "vecset",
+    "velgrad",
+    "velgrad2",
 )
 
-__version__ = "1.5.1"
+__version__ = "2.0.6"
 __author__ = "Ondrej Lexa"
 __email__ = "lexa.ondrej@gmail.com"

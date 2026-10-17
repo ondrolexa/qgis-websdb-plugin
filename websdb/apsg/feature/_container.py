@@ -1,9 +1,10 @@
 import csv
-from itertools import combinations
+from itertools import combinations, pairwise
 from os.path import basename
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import linalg as spla
 from scipy import stats
 from scipy.cluster.hierarchy import dendrogram, fcluster, linkage
 from scipy.integrate import quad
@@ -11,18 +12,29 @@ from scipy.optimize import root_scalar
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
 
-from apsg.config import apsg_conf
-from apsg.feature._geodata import Cone, Direction, Fault, Foliation, Lineation, Pair
-from apsg.feature._statistics import KentDistribution, vonMisesFisher
-from apsg.feature._tensor2 import Ellipse, OrientationTensor2
+from apsg.config import apsg_conf, stress_sign
+from apsg.feature._geodata import (
+    Arc,
+    Cone,
+    Direction,
+    Fault,
+    Foliation,
+    Lineation,
+    Pair,
+)
+from apsg.feature._statistics import (
+    KentDistribution,
+    jelinek_statistics,
+    vonMisesFisher,
+)
+from apsg.feature._tensor2 import Ellipse, OrientationTensor2, Stress2
 from apsg.feature._tensor3 import (
-    DeformationGradient3,
     Ellipsoid,
     OrientationTensor3,
     Rotation3,
     Stress3,
 )
-from apsg.helpers._math import acosd, atand
+from apsg.helpers._math import acosd, atan2d, atand, cosd, sind
 from apsg.math._vector import Axial2, Axial3, Vector2, Vector3
 
 _WATSON_U2_ALPHA = np.array([0.005, 0.01, 0.025, 0.05, 0.10])
@@ -54,12 +66,49 @@ def _watson_u2_test(w, level=0.95):
     }
 
 
+def _mean_tensor(tensor_set, level, normalize, anisoft):
+    """Mean tensor and principal axes confidence ellipses of a tensor set.
+
+    Shared implementation of ``EllipsoidSet.mean_tensor`` and
+    ``Stress3Set.mean_tensor``.
+    """
+    tensor_cls = tensor_set.__feature_class__
+    result = jelinek_statistics(
+        np.array([np.asarray(t) for t in tensor_set]),
+        level=level,
+        normalize=normalize,
+        anisoft=anisoft,
+    )
+    eigenvalues = result["eigenvalues"]
+    if issubclass(tensor_cls, (Stress2, Stress3)):
+        # internal matrices are mechanical; report eigenvalues in the active convention
+        eigenvalues = stress_sign() * eigenvalues
+    ellipses = tuple(
+        {
+            "mu": Vector3(e["mu"]),
+            "axes": tuple(Vector3(a) for a in e["axes"]),
+            "gamma": tuple(float(g) for g in e["gamma"]),
+            "which": which,
+        }
+        for which, e in enumerate(result["ellipses"])
+    )
+    return {
+        "mean": tensor_cls._from_canonical(result["mean"]),
+        "eigenvalues": eigenvalues,
+        "ellipses": ellipses,
+        "n": result["n"],
+        "level": result["level"],
+        "normalize": result["normalize"],
+        "anisoft": result["anisoft"],
+    }
+
+
 class FeatureSet:
     """
     Base class for containers.
     """
 
-    __slots__ = ("data", "name", "_cache")
+    __slots__ = ("_cache", "data", "name")
 
     def __init__(self, data, name="Default"):
         self.data = tuple(data)
@@ -1088,13 +1137,13 @@ class Vector3Set(FeatureSet):
                 return float(observed), float(p_value), p_value >= alpha
 
     def align(self, other):
-        """Return best estimate rotation as `DeformationGradient3` to align with others."""
+        """Return best estimate rotation as `Rotation3` to align with others."""
 
         R = Rotation.align_vectors(np.array(other), np.array(self))[0]
-        return DeformationGradient3(R.as_matrix())
+        return Rotation3(R.as_matrix())
 
     @classmethod
-    def from_csv(cls, filename, acol=0, icol=1):
+    def from_csv(cls, filename, acol=0, icol=1, name=None):
         """Create ``FeatureSet`` object from csv file of azimuths and inclinations.
 
         Args:
@@ -1104,10 +1153,13 @@ class Vector3Set(FeatureSet):
             acol (int or str): azimuth column (starts from 0). Default 0.
             icol (int or str): inclination column (starts from 0). Default 1.
                 When acol and icol are strings they are used as column headers.
+            name (str): name of the created feature set. Default is the
+                filename without its directory part.
 
         Examples:
             >>> gf = folset.from_csv('file1.csv')                 #doctest: +SKIP
             >>> gl = linset.from_csv('file2.csv', acol=1, icol=2) #doctest: +SKIP
+            >>> gl = linset.from_csv('file2.csv', name='My data') #doctest: +SKIP
 
         Returns:
             FeatureSet: The created feature set.
@@ -1136,7 +1188,9 @@ class Vector3Set(FeatureSet):
                     raise ValueError("No header line in CSV file...")
 
         azi, inc = zip(*r)
-        return cls.from_array(azi, inc, name=basename(filename))
+        return cls.from_array(
+            azi, inc, name=name if name is not None else basename(filename)
+        )
 
     def to_csv(self, filename, delimiter=","):
         """Save ``FeatureSet`` object to csv file of azimuths and inclinations.
@@ -1236,7 +1290,7 @@ class Vector3Set(FeatureSet):
         return cls(data, name=name)
 
     @classmethod
-    def random_normal(cls, n=100, position=Vector3(0, 0, 1), sigma=20, name="Default"):
+    def random_normal(cls, n=100, position=None, sigma=20, name="Default"):
         """Method to create ``FeatureSet`` of normaly distributed features.
 
         Keyword Args:
@@ -1254,6 +1308,8 @@ class Vector3Set(FeatureSet):
         Returns:
             FeatureSet: The created feature set.
         """
+        if position is None:
+            position = Vector3(0, 0, 1)
         data = []
         orig = Vector3(0, 0, 1)
         ax = orig.cross(position)
@@ -1267,7 +1323,7 @@ class Vector3Set(FeatureSet):
         return cls(data, name=name)
 
     @classmethod
-    def random_fisher(cls, n=100, position=Vector3(0, 0, 1), kappa=20, name="Default"):
+    def random_fisher(cls, n=100, position=None, kappa=20, name="Default"):
         """Return ``FeatureSet`` of random vectors sampled from von Mises Fisher
         distribution around center position with concentration kappa.
 
@@ -1282,6 +1338,8 @@ class Vector3Set(FeatureSet):
         Returns:
             FeatureSet: The created feature set.
         """
+        if position is None:
+            position = Vector3(0, 0, 1)
         dc = vonMisesFisher(position, kappa, n)
         return cls([cls.__feature_class__(d) for d in dc], name=name)
 
@@ -1492,6 +1550,12 @@ class PairSet(FeatureSet):
         return np.array([f.misfit for f in self])
 
     @property
+    def rake(self):
+        """Return array of rakes of linear features on planar features."""
+
+        return np.array([f.rake for f in self])
+
+    @property
     def rax(self):
         """Return vectors perpendicular to both planar and linear parts."""
         return Vector3Set([e.rax for e in self], name=self.name)
@@ -1542,8 +1606,14 @@ class PairSet(FeatureSet):
         lacol=2,
         licol=3,
         scol=4,
+        name=None,
     ):
-        """Read ``PairSet`` from csv file."""
+        """Read ``PairSet`` from csv file.
+
+        Keyword Args:
+            name (str): name of the created ``PairSet``. Default is the
+                filename without its directory part.
+        """
 
         with open(filename) as csvfile:
             has_header = csv.Sniffer().has_header(csvfile.read(1024))
@@ -1605,7 +1675,13 @@ class PairSet(FeatureSet):
                     raise ValueError("No header line in CSV file...")
 
         fazi, finc, lazi, linc = zip(*r)
-        return cls.from_array(fazi, finc, lazi, linc, name=basename(filename))
+        return cls.from_array(
+            fazi,
+            finc,
+            lazi,
+            linc,
+            name=name if name is not None else basename(filename),
+        )
 
     def to_csv(self, filename, delimiter=","):
         """Save ``PairSet`` object to csv file.
@@ -1766,8 +1842,14 @@ class FaultSet(PairSet):
         lacol=2,
         licol=3,
         scol=4,
+        name=None,
     ):
-        """Read ``FaultSet`` from csv file."""
+        """Read ``FaultSet`` from csv file.
+
+        Keyword Args:
+            name (str): name of the created ``FaultSet``. Default is the
+                filename without its directory part.
+        """
 
         with open(filename) as csvfile:
             has_header = csv.Sniffer().has_header(csvfile.read(1024))
@@ -1859,7 +1941,14 @@ class FaultSet(PairSet):
                     raise ValueError("No header line in CSV file...")
 
         fazi, finc, lazi, linc, sense = zip(*r)
-        return cls.from_array(fazi, finc, lazi, linc, sense, name=basename(filename))
+        return cls.from_array(
+            fazi,
+            finc,
+            lazi,
+            linc,
+            sense,
+            name=name if name is not None else basename(filename),
+        )
 
     def to_csv(self, filename, delimiter=",", sense_str=False):
         """Save ``FaultSet`` object to csv file.
@@ -2029,6 +2118,95 @@ class ConeSet(FeatureSet):
     def __repr__(self):
         return f"C({len(self)}) {self.name}"
 
+    @property
+    def revangle(self):
+        """Return array of revolution angles."""
+
+        return np.array([c.revangle for c in self])
+
+    @property
+    def apical_angle(self):
+        """Return array of apical angles."""
+
+        return np.array([c.apical_angle() for c in self])
+
+
+class ArcSet(FeatureSet):
+    """
+    Class to store set of ``Arc`` features.
+    """
+
+    __feature_class__ = Arc
+
+    def __init__(self, data, name="Default"):
+        super().__init__(data, name=name)
+        if not all(isinstance(obj, Arc) for obj in data):
+            raise TypeError("Data must be instances of Arc")
+
+    def __repr__(self):
+        return f"A({len(self)}) {self.name}"
+
+    @property
+    def curvature(self):
+        """Return array of curvatures."""
+
+        return np.array([a.curvature for a in self])
+
+    @property
+    def positive(self):
+        """Return array of curvature directions."""
+
+        return np.array([a.positive for a in self], dtype=bool)
+
+    @property
+    def short(self):
+        """Return array of short/reflex path flags."""
+
+        return np.array([a.short for a in self], dtype=bool)
+
+    @classmethod
+    def from_vectors(
+        cls, *args, curvature=0, positive=True, short=True, name="Default"
+    ):
+        """
+        Create ``ArcSet`` connecting consecutive pairs of vectors.
+
+        Accepts either a single ``Vector3Set``-like object (a ``Vector3Set``,
+        ``LineationSet``, ``FoliationSet``, ...) or 2 or more individual
+        ``Vector3``-like features as separate positional arguments. Consecutive
+        pairs are connected into one ``Arc`` each, so N vectors produce N-1 arcs.
+
+        Args:
+            *args: a single ``Vector3Set``-like object, or 2 or more individual
+                ``Vector3``-like features.
+
+        Keyword Args:
+            curvature (float): passed to each ``Arc``. Default 0.
+            positive (bool): passed to each ``Arc``. Default True.
+            short (bool): passed to each ``Arc``. Default True.
+            name: name of dataset. Default is 'Default'.
+
+        Examples:
+            >>> a = arcset.from_vectors(lin(0, 0), lin(45, 20), lin(90, 0))
+            >>> a = arcset.from_vectors(linset.random_fisher(n=5))
+
+        Returns:
+            ArcSet: The created feature set.
+        """
+        if len(args) == 1 and isinstance(args[0], Vector3Set):
+            points = args[0].data
+        else:
+            points = args
+        if len(points) < 2 or not all(isinstance(p, Vector3) for p in points):
+            raise TypeError(
+                "ArcSet.from_vectors needs a Vector3Set or 2 or more Vector3-like features"
+            )
+        arcs = [
+            Arc(p1, p2, curvature=curvature, positive=positive, short=short)
+            for p1, p2 in pairwise(points)
+        ]
+        return cls(arcs, name=name)
+
 
 class EllipseSet(FeatureSet):
     """
@@ -2091,6 +2269,45 @@ class EllipseSet(FeatureSet):
         """
         return type(self)([e.transform(F) for e in self], name=self.name)
 
+    def rfphi(self) -> Ellipse:
+        """Return strain ellipse from the Rf/phi analytical vector-mean method.
+
+        Doubles each ellipse orientation (ellipses have 180° periodicity) and
+        averages ``ln(Rf)`` in that doubled-angle Cartesian space before
+        converting back, following the standard Rf/phi vector-mean technique:
+
+            x_i = ln(Rf_i) * cos(2 * phi_i)
+            y_i = ln(Rf_i) * sin(2 * phi_i)
+            Rs = exp(sqrt(mean(x)**2 + mean(y)**2))
+            phi_s = atan2d(mean(y), mean(x)) / 2
+
+        Returns:
+            Ellipse: strain ellipse with axial ratio ``Rs`` and orientation ``phi_s``.
+        """
+        phi2 = np.radians(2 * self.orientation)
+        x = np.log(self.ar) * np.cos(phi2)
+        y = np.log(self.ar) * np.sin(phi2)
+        xbar, ybar = x.mean(), y.mean()
+        Rs = np.exp(np.sqrt(xbar**2 + ybar**2))
+        phi_s = atan2d(ybar, xbar) / 2
+        c, s = cosd(phi_s), sind(phi_s)
+        R = np.array([[c, -s], [s, c]])
+        return Ellipse(R @ np.diag([Rs, 1 / Rs]) @ R.T)
+
+    def robin(self) -> Ellipse:
+        """Return mean strain ellipse using the log-matrix method of Robin (1977).
+
+        Averages the matrix logarithms of all tensors in this set and maps the
+        result back with the matrix exponential (the log-Euclidean tensor mean),
+        avoiding the distortion a naive linear average of the tensors themselves
+        would introduce for anisotropic/high-strain ellipses.
+
+        Returns:
+            Ellipse: mean strain ellipse.
+        """
+        mean_log = np.mean([spla.logm(np.asarray(e)) for e in self], axis=0)
+        return Ellipse(spla.expm(mean_log).real)
+
 
 class OrientationTensor2Set(EllipseSet):
     """
@@ -2122,6 +2339,11 @@ class EllipsoidSet(FeatureSet):
 
     def __repr__(self):
         return f"E({len(self)}) {self.name}"
+
+    @property
+    def kind(self) -> np.ndarray:
+        """Return the array of descriptive types of ellipsoids."""
+        return np.array([e.kind for e in self])
 
     @property
     def strength(self) -> np.ndarray:
@@ -2229,6 +2451,16 @@ class EllipsoidSet(FeatureSet):
         return np.array([e.lode for e in self])
 
     @property
+    def P_j(self) -> np.ndarray:
+        """Return the array of corrected anisotropy degrees (Jelínek, 1981)."""
+        return np.array([e.P_j for e in self])
+
+    @property
+    def T(self) -> np.ndarray:
+        """Return the array of shape parameters (Jelínek, 1981)."""
+        return np.array([e.T for e in self])
+
+    @property
     def P(self) -> np.ndarray:
         """Return the array of Point indexes (Vollmer, 1990)."""
         return np.array([e.P for e in self])
@@ -2268,6 +2500,55 @@ class EllipsoidSet(FeatureSet):
         """Return approximate deviation according to shape"""
         return np.array([e.MAD for e in self])
 
+    def mean_tensor(self, level=0.95, normalize=False, anisoft=False):
+        """Return mean tensor and confidence ellipses of its principal axes.
+
+        Uses the classic linear perturbation method of Jelinek (1978), which
+        builds upon Hext (1963) matrix statistics. Each tensor is rotated to
+        the principal frame of the mean tensor and the sample covariance of the
+        first-order angular deviations of each principal axis towards the other
+        two axes gives the confidence ellipse (Hotelling's T² with
+        ``F(2, n - 2)``).
+
+        Jelinek, V. (1978). Statistical processing of anisotropy of magnetic
+            susceptibility measured on groups of specimens. Studia Geophysica
+            et Geodaetica, 22, 50-62.
+        Hext, G.R. (1963). The estimation of second-order tensors, with related
+            tests and designs. Biometrika, 50, 353-373.
+
+        Note:
+            The covariance is the unbiased sample covariance and the region is
+            the exact Hotelling T² region (in simulation its coverage matches
+            the nominal level). Use ``anisoft=True`` to reproduce
+            implementations (jelinekstat, TomoFab) that additionally scale the
+            covariance by ``((n - 1) / n)²``.
+
+        Args:
+            level (float): confidence level. Default 0.95 for 95 %.
+            normalize (bool): divide each tensor by its absolute mean value
+                ``abs(trace) / 3`` before averaging, as usual for anisotropy
+                of magnetic susceptibility. Default False. Fails for tensors
+                with zero trace.
+            anisoft (bool): multiply the tilts of the principal axes by an extra
+                factor ``(n - 1) / n`` (the covariance by ``((n - 1) / n)²``),
+                which shrinks the ellipses (by about 9-12 % in angle for n = 8) and
+                lowers their coverage below the nominal level. Default False.
+
+        Returns:
+            dict: with keys ``mean`` (mean tensor), ``eigenvalues`` (of the
+            mean tensor, descending), ``ellipses`` (tuple of three dicts, one
+            for each principal axis of the mean tensor, 0 is the largest
+            eigenvalue, with keys ``mu`` (principal axis), ``axes`` (tuple of
+            the two ellipse axes, perpendicular to ``mu``), ``gamma`` (tuple
+            of the corresponding semi-angles in degrees) and ``which``), ``n``
+            (sample size), ``level``, ``normalize`` and ``anisoft``.
+
+        Raises:
+            ValueError: for less than 3 tensors, or when ``normalize`` is used
+                on tensors with zero trace.
+        """
+        return _mean_tensor(self, level, normalize, anisoft)
+
     def transform(self, F):
         """Return transformation of all features ``EllipsoidSet`` by matrix 'F'.
 
@@ -2278,6 +2559,20 @@ class EllipsoidSet(FeatureSet):
             EllipsoidSet: The transformed feature set.
         """
         return type(self)([e.transform(F) for e in self], name=self.name)
+
+    def robin(self) -> Ellipsoid:
+        """Return mean strain ellipsoid using the log-matrix method of Robin (1977).
+
+        Averages the matrix logarithms of all tensors in this set and maps the
+        result back with the matrix exponential (the log-Euclidean tensor mean),
+        avoiding the distortion a naive linear average of the tensors themselves
+        would introduce for anisotropic/high-strain ellipsoids.
+
+        Returns:
+            Ellipsoid: mean strain ellipsoid.
+        """
+        mean_log = np.mean([spla.logm(np.asarray(e)) for e in self], axis=0)
+        return Ellipsoid(spla.expm(mean_log).real)
 
 
 class OrientationTensor3Set(EllipsoidSet):
@@ -2296,6 +2591,70 @@ class OrientationTensor3Set(EllipsoidSet):
         return f"M({len(self)}) {self.name}"
 
 
+class Stress2Set(FeatureSet):
+    """
+    Class to store set of ``Stress2`` features.
+    """
+
+    __feature_class__ = Stress2
+
+    def __init__(self, data, name="Default"):
+        super().__init__(data, name=name)
+        if not all(isinstance(obj, Stress2) for obj in data):
+            raise TypeError("Data must be instances of Stress2")
+
+    def __repr__(self):
+        return f"Sig2({len(self)}) {self.name}"
+
+    @property
+    def mean_stress(self) -> np.ndarray:
+        """Return the array of mean stresses."""
+
+        return np.array([e.mean_stress for e in self])
+
+    @property
+    def sigma1(self) -> np.ndarray:
+        """Return the array of the maximum principal stress (max compressive)."""
+
+        return np.array([e.sigma1 for e in self])
+
+    @property
+    def sigma2(self) -> np.ndarray:
+        """Return the array of the minimum principal stress."""
+
+        return np.array([e.sigma2 for e in self])
+
+    @property
+    def sigma1dir(self) -> Vector2Set:
+        """Return Vector2Set of unit length vector in direction of maximum."""
+
+        return Vector2Set([e.sigma1dir for e in self])
+
+    @property
+    def sigma2dir(self) -> Vector2Set:
+        """Return Vector2Set of unit length vector in direction of minimum."""
+
+        return Vector2Set([e.sigma2dir for e in self])
+
+    @property
+    def I1(self) -> np.ndarray:
+        """Return the array of first invariants."""
+
+        return np.array([e.I1 for e in self])
+
+    @property
+    def I2(self) -> np.ndarray:
+        """Return the array of second invariants."""
+
+        return np.array([e.I2 for e in self])
+
+    @property
+    def I3(self) -> np.ndarray:
+        """Return the array of third invariants."""
+
+        return np.array([e.I3 for e in self])
+
+
 class Stress3Set(FeatureSet):
     """
     Class to store set of ``Stress3`` features.
@@ -2310,6 +2669,12 @@ class Stress3Set(FeatureSet):
 
     def __repr__(self):
         return f"Sig({len(self)}) {self.name}"
+
+    @property
+    def mean_stress(self) -> np.ndarray:
+        """Return the array of mean stresses."""
+
+        return np.array([e.mean_stress for e in self])
 
     @property
     def sigma1(self) -> np.ndarray:
@@ -2347,8 +2712,83 @@ class Stress3Set(FeatureSet):
 
         return Vector3Set([e.sigma3dir for e in self])
 
+    @property
+    def I1(self) -> np.ndarray:
+        """Return the array of first invariants."""
 
-class ClusterSet(object):
+        return np.array([e.I1 for e in self])
+
+    @property
+    def I2(self) -> np.ndarray:
+        """Return the array of second invariants."""
+
+        return np.array([e.I2 for e in self])
+
+    @property
+    def I3(self) -> np.ndarray:
+        """Return the array of third invariants."""
+
+        return np.array([e.I3 for e in self])
+
+    @property
+    def stress_ratio(self) -> np.ndarray:
+        """Return the array of stress ratios R = (σ2 - σ3) / (σ1 - σ3)."""
+
+        return np.array([e.stress_ratio for e in self])
+
+    def mean_tensor(self, level=0.95, normalize=False, anisoft=False):
+        """Return mean tensor and confidence ellipses of its principal axes.
+
+        Uses the classic linear perturbation method of Jelinek (1978), which
+        builds upon Hext (1963) matrix statistics. Each tensor is rotated to
+        the principal frame of the mean tensor and the sample covariance of the
+        first-order angular deviations of each principal axis towards the other
+        two axes gives the confidence ellipse (Hotelling's T² with
+        ``F(2, n - 2)``).
+
+        Jelinek, V. (1978). Statistical processing of anisotropy of magnetic
+            susceptibility measured on groups of specimens. Studia Geophysica
+            et Geodaetica, 22, 50-62.
+        Hext, G.R. (1963). The estimation of second-order tensors, with related
+            tests and designs. Biometrika, 50, 353-373.
+
+        Note:
+            The covariance is the unbiased sample covariance and the region is
+            the exact Hotelling T² region (in simulation its coverage matches
+            the nominal level). Use ``anisoft=True`` to reproduce
+            implementations (jelinekstat, TomoFab) that additionally scale the
+            covariance by ``((n - 1) / n)²``.
+
+        Args:
+            level (float): confidence level. Default 0.95 for 95 %.
+            normalize (bool): divide each tensor by its absolute mean value
+                ``abs(trace) / 3`` before averaging, as usual for anisotropy
+                of magnetic susceptibility. Default False. Fails for tensors
+                with zero trace.
+            anisoft (bool): multiply the tilts of the principal axes by an extra
+                factor ``(n - 1) / n`` (the covariance by ``((n - 1) / n)²``),
+                which shrinks the ellipses (by about 9-12 % in angle for n = 8) and
+                lowers their coverage below the nominal level. Default False.
+
+        Returns:
+            dict: with keys ``mean`` (mean tensor), ``eigenvalues`` (of the
+            mean tensor, descending; for stress sets the sign follows
+            ``apsg_conf.stress_convention``, index-aligned with ``ellipses``),
+            ``ellipses`` (tuple of three dicts, one
+            for each principal axis of the mean tensor, 0 is the largest
+            eigenvalue, with keys ``mu`` (principal axis), ``axes`` (tuple of
+            the two ellipse axes, perpendicular to ``mu``), ``gamma`` (tuple
+            of the corresponding semi-angles in degrees) and ``which``), ``n``
+            (sample size), ``level``, ``normalize`` and ``anisoft``.
+
+        Raises:
+            ValueError: for less than 3 tensors, or when ``normalize`` is used
+                on tensors with zero trace.
+        """
+        return _mean_tensor(self, level, normalize, anisoft)
+
+
+class ClusterSet:
     """
     Provides a hierarchical clustering using `scipy.cluster` routines.
     The distance matrix is calculated as an angle between features, where ``Foliation``
@@ -2367,11 +2807,9 @@ class ClusterSet(object):
     """
 
     def __init__(self, d, **kwargs):
-        assert (
-            isinstance(d, Vector2Set)
-            or isinstance(d, Vector3Set)
-            or isinstance(d, PairSet)
-        ), "Only vec2set, vecset and pairset could be clustered"
+        assert isinstance(d, (Vector2Set, Vector3Set, PairSet)), (
+            "Only vec2set, vecset and pairset could be clustered"
+        )
         self.data = d.copy()
         self.maxclust = kwargs.get("maxclust", 2)
         self.angle = kwargs.get("angle", None)
@@ -2438,7 +2876,7 @@ class ClusterSet(object):
     def dendrogram(self, **kwargs):
         """Show dendrogram."""
 
-        fig, ax = plt.subplots(figsize=apsg_conf.figsize)
+        _fig, ax = plt.subplots(figsize=apsg_conf.figsize)
         dendrogram(self.Z, ax=ax, **kwargs)
         plt.show()
 
@@ -2452,14 +2890,14 @@ class ClusterSet(object):
             nclust = list(np.arange(1, n + 1, dtype=int))
         within_grp_var = []
         mean_var = []
-        for n in nclust:
-            idx = fcluster(self.Z, n, criterion="maxclust")
+        for k in nclust:
+            idx = fcluster(self.Z, k, criterion="maxclust")
             grp = [np.flatnonzero(idx == c) for c in np.unique(idx)]
             var = [100 * self.data[ix].var() for ix in grp]
             within_grp_var.append(var)
             mean_var.append(np.mean(var))
         if not no_plot:
-            fig, ax = plt.subplots(figsize=apsg_conf.figsize)
+            _fig, ax = plt.subplots(figsize=apsg_conf.figsize)
             ax.boxplot(within_grp_var, positions=nclust)
             ax.plot(nclust, mean_var, "k")
             ax.set_xlabel("Number of clusters")
@@ -2493,6 +2931,8 @@ def _build_registry():
             OrientationTensor3: OrientationTensor3Set,
             Ellipse: EllipseSet,
             OrientationTensor2: OrientationTensor2Set,
+            Stress3: Stress3Set,
+            Stress2: Stress2Set,
         }
     )
 

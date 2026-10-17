@@ -30,6 +30,8 @@ class RosePlot:
         ticks (bool): show ticks. Default True
         grid (bool): show grid lines. Default False
         grid_kws (dict): Dict passed to Axes.grid. Default {}
+        legend_kws (dict): Extra keyword arguments passed to matplotlib's
+            ``legend``, overriding apsg's defaults. Default {}
 
         Other keyword arguments are passed to matplotlib plot.
 
@@ -57,7 +59,13 @@ class RosePlot:
         # self.ax.format_coord = self.format_coord
         self.ax.set_theta_direction(-1)  # type: ignore
         self.ax.set_theta_zero_location("N")  # type: ignore
-        self.ax.grid(self._kwargs["grid"], **self._kwargs["grid_kws"])
+        if self._kwargs["grid"]:
+            self.ax.grid(True, **self._kwargs["grid_kws"])
+        else:
+            # matplotlib's grid() enables the grid regardless of a false first
+            # argument -- with a warning -- when grid_kws is non-empty, so it must
+            # be omitted entirely to actually keep the grid off
+            self.ax.grid(False)
 
     def _plot_artists(self):
         for artist in self._artists:
@@ -67,7 +75,7 @@ class RosePlot:
     def to_json(self):
         """Return rose plot as JSON dict."""
         artists = [artist.to_json() for artist in self._artists]
-        return dict(kwargs=self._kwargs, artists=artists)
+        return {"kwargs": self._kwargs, "artists": artists}
 
     @classmethod
     def from_json(cls, json_dict):
@@ -114,16 +122,16 @@ class RosePlot:
         self._plot_artists()
         h, lbls = self.ax.get_legend_handles_labels()
         if h:
-            self._lgd = self.ax.legend(
-                h,
-                lbls,
-                prop={"size": 11},
-                borderaxespad=0,
-                loc="center left",
-                bbox_to_anchor=(1.1, 0.5),
-                scatterpoints=1,
-                numpoints=1,
-            )
+            legend_kwargs = {
+                "prop": {"size": 11},
+                "borderaxespad": 0,
+                "loc": "center left",
+                "bbox_to_anchor": (1.1, 0.5),
+                "scatterpoints": 1,
+                "numpoints": 1,
+            }
+            legend_kwargs.update(self._kwargs["legend_kws"])
+            self._lgd = self.ax.legend(h, lbls, **legend_kwargs)
         if self._kwargs["title"] is not None:
             self.fig.suptitle(self._kwargs["title"], **self._kwargs["title_kws"])
         if self._kwargs["tight_layout"]:
@@ -141,7 +149,8 @@ class RosePlot:
 
     def show(self):
         """Show rose plot."""
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         plt.show()
@@ -155,11 +164,12 @@ class RosePlot:
 
         All others kwargs are passed to matplotlib `Figure.savefig`
         """
-        plt.close(0)  # close previously rendered figure
+        if hasattr(self, "fig"):
+            plt.close(self.fig)  # close previously rendered figure
         self.init_figure()
         self._render()
         self.fig.savefig(filename, **kwargs)
-        plt.close(0)
+        plt.close(self.fig)  # don't leave open for Jupyter's auto-display
 
     ########################################
     # STYLED PLOTTING                      #

@@ -7,6 +7,7 @@ from apsg.config import apsg_conf
 from apsg.helpers._helper import is_jsonable
 from apsg.helpers._math import acosd, atan2d, cosd, sind
 from apsg.helpers._notation import (
+    _fmt_deg,
     geo2vec_linear,
     vec2geo_linear_signed,
 )
@@ -15,7 +16,7 @@ from apsg.helpers._notation import (
 class Vector(ABC):
     """Abstract base class for Vector2 and Vector3."""
 
-    __slots__ = ("_coords", "_attrs")
+    __slots__ = ("_attrs", "_coords")
     __shape__ = None
 
     @abstractmethod
@@ -93,7 +94,7 @@ class Vector(ABC):
     __pos__ = __copy__
 
     def __abs__(self):
-        return math.sqrt(sum(map(lambda x: x * x, self._coords)))
+        return math.sqrt(sum(x * x for x in self._coords))
 
     magnitude = __abs__
 
@@ -182,7 +183,7 @@ class Vector2(Vector):
 
     """
 
-    __slots__ = ("_coords", "_attrs")
+    __slots__ = ("_attrs", "_coords")
     __shape__ = (2,)
 
     def __init__(self, *args, **kwargs):
@@ -213,7 +214,7 @@ class Vector2(Vector):
 
     def __repr__(self):
         n = apsg_conf.ndigits
-        return f"Vector2({round(self.x, n):g}, {round(self.y, n):g})"
+        return f"Vector2({round(self.x, n) + 0.0:g}, {round(self.y, n) + 0.0:g})"
 
     def __len__(self):
         return 2
@@ -337,23 +338,20 @@ class Axial2(Vector2):  # Do we need it?
         return np.allclose(self, other) or np.allclose(self, -other)
 
     def __add__(self, other):
-        if isinstance(other, Vector2):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector2) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.add(self, other))
 
     __radd__ = __add__
 
     def __sub__(self, other):
-        if isinstance(other, Vector2):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector2) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.subtract(self, other))
 
     def __rsub__(self, other):
-        if isinstance(other, Vector2):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector2) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.subtract(other, self))
 
     def dot(self, other):
@@ -388,7 +386,7 @@ class Vector3(Vector):
 
     """
 
-    __slots__ = ("_coords", "_attrs")
+    __slots__ = ("_attrs", "_coords")
     __shape__ = (3,)
 
     def __init__(self, *args, **kwargs):
@@ -430,10 +428,11 @@ class Vector3(Vector):
     def __repr__(self):
         if apsg_conf.vec2geo:
             azi, inc = self.geo
-            return f"V:{azi:.0f}/{inc:.0f}"
+            return f"V:{_fmt_deg(azi, azimuth=True)}/{_fmt_deg(inc)}"
         else:
             n = apsg_conf.ndigits
-            return f"Vector3({round(self.x, n):g}, {round(self.y, n):g}, {round(self.z, n):g})"
+            x, y, z = (round(c, n) + 0.0 for c in (self.x, self.y, self.z))
+            return f"Vector3({x:g}, {y:g}, {z:g})"
 
     def __len__(self):
         return 3
@@ -614,23 +613,20 @@ class Axial3(Vector3):
         return np.allclose(self, other) or np.allclose(self, -other)
 
     def __add__(self, other):
-        if isinstance(other, Vector3):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector3) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.add(self, other))
 
     __radd__ = __add__
 
     def __sub__(self, other):
-        if isinstance(other, Vector3):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector3) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.subtract(self, other))
 
     def __rsub__(self, other):
-        if isinstance(other, Vector3):
-            if super().dot(other) < 0:
-                other = -other
+        if isinstance(other, Vector3) and super().dot(other) < 0:
+            other = -other
         return type(self)(np.subtract(other, self))
 
     def dot(self, other):
