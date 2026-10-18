@@ -28,7 +28,7 @@ qgisMinimumVersion=3.40
 qgisMaximumVersion=4.99
 
 # versioning
-version=1.0.4
+version=1.0.5
 changelog=
  1.0.2 2026-10-18
  - security bugs fixed

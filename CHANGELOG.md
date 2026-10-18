@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.5 - 2026-10-18
+
+- Vendored APSG no longer ships `shell.py` (the `iapsg` interactive console), which the
+  plugin doesn't need.
+
 ## 1.0.4 - 2026-10-18
 
 - Code-quality cleanup for the plugin repository checks: flake8-clean plugin code
