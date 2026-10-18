@@ -78,24 +78,32 @@ class ApiClient:
             multipart.append(part)
         return multipart
 
-    def _request(self, method, path, params=None, json_body=None, form_data=None, files=None):
+    def _request(
+        self, method, path, params=None, json_body=None, form_data=None, files=None
+    ):
         request = QNetworkRequest(self._build_url(path, params))
         if self.token:
-            request.setRawHeader(b"Authorization", f"Bearer {self.token}".encode("utf-8"))
+            request.setRawHeader(
+                b"Authorization", f"Bearer {self.token}".encode("utf-8")
+            )
 
         data = None
         multipart = None
         if files is not None:
             multipart = self._build_multipart(form_data, files)
         elif json_body is not None:
-            request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+            request.setHeader(
+                QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json"
+            )
             data = QByteArray(json.dumps(json_body).encode("utf-8"))
         elif form_data is not None:
             request.setHeader(
                 QNetworkRequest.KnownHeaders.ContentTypeHeader,
                 "application/x-www-form-urlencoded",
             )
-            encoded = "&".join(f"{k}={v}" for k, v in form_data.items() if v is not None)
+            encoded = "&".join(
+                f"{k}={v}" for k, v in form_data.items() if v is not None
+            )
             data = QByteArray(encoded.encode("utf-8"))
 
         breq = QgsBlockingNetworkRequest()
@@ -103,7 +111,9 @@ class ApiClient:
         if method == "GET":
             breq.get(request)
         elif method == "POST":
-            breq.post(request, multipart if multipart is not None else (data or QByteArray()))
+            breq.post(
+                request, multipart if multipart is not None else (data or QByteArray())
+            )
         elif method == "PUT":
             breq.put(request, data or QByteArray())
         elif method == "DELETE":
@@ -156,7 +166,9 @@ class ApiClient:
 
     def create_project(self, name, description=None):
         return self._request(
-            "POST", "/api/projects", json_body={"name": name, "description": description}
+            "POST",
+            "/api/projects",
+            json_body={"name": name, "description": description},
         )
 
     # -- sites ------------------------------------------------------------

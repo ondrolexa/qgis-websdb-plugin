@@ -155,7 +155,7 @@ class Matrix(ABC):
         return self._component(1, 1)
 
     @property
-    def I(self):
+    def I(self):  # noqa: E743
         return self._derive(np.linalg.inv(self))
 
     @property

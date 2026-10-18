@@ -79,7 +79,9 @@ class PlgLogger(logging.Handler):
         .. code-block:: python
 
             # using enums from Qgis:
-            # Qgis.MessageLevel.Info, Qgis.MessageLevel.Warning, Qgis.MessageLevel.Critical, Qgis.MessageLevel.Success, Qgis.MessageLevel.NoLevel
+            # Qgis.MessageLevel.Info, Qgis.MessageLevel.Warning,
+            # Qgis.MessageLevel.Critical, Qgis.MessageLevel.Success,
+            # Qgis.MessageLevel.NoLevel
             from qgis.core import Qgis
 
             log(message="Plugin loaded - INFO", log_level=Qgis.MessageLevel.Info, push=False)
@@ -95,8 +97,18 @@ class PlgLogger(logging.Handler):
 
             # LEGACY - using integers:
             log(message="Plugin loaded - INFO", log_level=Qgis.MessageLevel.Info, push=False)
-            log(message="Plugin loaded - WARNING", log_level=Qgis.MessageLevel.Warning, push=1, duration=5)
-            log(message="Plugin loaded - ERROR", log_level=Qgis.MessageLevel.Critical, push=1, duration=0)
+            log(
+                message="Plugin loaded - WARNING",
+                log_level=Qgis.MessageLevel.Warning,
+                push=1,
+                duration=5,
+            )
+            log(
+                message="Plugin loaded - ERROR",
+                log_level=Qgis.MessageLevel.Critical,
+                push=1,
+                duration=0,
+            )
             log(
                 message="Plugin loaded - SUCCESS",
                 log_level=Qgis.MessageLevel.Success,

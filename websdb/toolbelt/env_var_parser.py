@@ -54,7 +54,8 @@ class EnvVarParser:
             return default  # Return default value in case of conversion failure
 
         raise TypeError(
-            f"Unsupported type: {expected_type}. Value definition from environment variable is not possible."
+            f"Unsupported type: {expected_type}. "
+            "Value definition from environment variable is not possible."
         )
 
     @staticmethod

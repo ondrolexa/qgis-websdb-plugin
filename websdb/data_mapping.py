@@ -32,7 +32,9 @@ def resolve_rock_map(rocks):
     }
 
 
-def filter_geodata(geodata_rows, rock_map, datatype=None, unit_id=None, tags=None, site_ids=None):
+def filter_geodata(
+    geodata_rows, rock_map, datatype=None, unit_id=None, tags=None, site_ids=None
+):
     """Join raw GeodataResponse dicts against a rock_id -> rock map and filter them.
 
     Fault records are always excluded (out of scope for this plugin - no

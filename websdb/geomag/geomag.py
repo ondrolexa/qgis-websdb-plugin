@@ -67,7 +67,6 @@ class GeoMag:
             
             #for (m=0,D3=1,D4=(n+m+D3)/D3;D4>0;D4--,m+=D3):
             m=0
-            D3=1
             #D4=(n+m+D3)/D3
             D4=(n+m+1)
             while D4>0:
@@ -161,7 +160,7 @@ class GeoMag:
             if (glat > 0.0 and glon >= 0.0):
                 gv = dec-glon
             if (glat > 0.0 and glon < 0.0):
-                gv = dec+math.fabs(glon);
+                gv = dec+math.fabs(glon)
             if (glat < 0.0 and glon >= 0.0):
                 gv = dec+glon
             if (glat < 0.0 and glon < 0.0):

@@ -525,15 +525,15 @@ def jelinek_statistics(tensors, level=0.95, normalize=False, anisoft=False):
     scale = ((n - 1) / n) ** 2 if anisoft else 1.0
     ellipses = []
     for i in range(3):
-        j, l = [m for m in range(3) if m != i]
-        dj, dl = k[i] - k[j], k[i] - k[l]
-        if abs(dj) <= tol or abs(dl) <= tol:
-            axes, gamma = (P[:, j], P[:, l]), (90.0, 90.0)
+        j, q = [m for m in range(3) if m != i]
+        dj, dq = k[i] - k[j], k[i] - k[q]
+        if abs(dj) <= tol or abs(dq) <= tol:
+            axes, gamma = (P[:, j], P[:, q]), (90.0, 90.0)
         else:
-            W = np.cov(np.vstack([rotated[:, i, j] / dj, rotated[:, i, l] / dl]))
+            W = np.cov(np.vstack([rotated[:, i, j] / dj, rotated[:, i, q] / dq]))
             lam, U = np.linalg.eigh(W)
             lam, U = np.clip(lam[::-1], 0, None), U[:, ::-1]
-            axes = tuple(U[0, m] * P[:, j] + U[1, m] * P[:, l] for m in range(2))
+            axes = tuple(U[0, m] * P[:, j] + U[1, m] * P[:, q] for m in range(2))
             gamma = tuple(np.degrees(np.arctan(np.sqrt(scale * T0 * lam / n))))
         ellipses.append({"mu": P[:, i], "axes": axes, "gamma": gamma})
     return {

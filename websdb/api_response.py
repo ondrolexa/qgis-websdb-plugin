@@ -75,10 +75,14 @@ def interpret_response(status_code, content_bytes):
         raise ApiConnectionError("No response from server")
 
     if status_code == 401:
-        raise ApiAuthError(extract_detail(content_bytes) or "Not authenticated", status_code)
+        raise ApiAuthError(
+            extract_detail(content_bytes) or "Not authenticated", status_code
+        )
 
     if status_code >= 400:
-        message = extract_detail(content_bytes) or f"Request failed (HTTP {status_code})"
+        message = (
+            extract_detail(content_bytes) or f"Request failed (HTTP {status_code})"
+        )
         raise ApiError(message, status_code)
 
     if not content_bytes:

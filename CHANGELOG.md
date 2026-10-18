@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.4 - 2026-10-18
+
+- Code-quality cleanup for the plugin repository checks: flake8-clean plugin code
+  (`read_structures` split into helpers), lint fixes in vendored APSG/geomag, unused APSG
+  `shell.py` removed, executable bits removed from Python files.
+
 ## 1.0.3 - 2026-10-18
 
 - Use scoped `Qgis` enums (`TransformDirection`, `WkbType`, `LayerFilter`,

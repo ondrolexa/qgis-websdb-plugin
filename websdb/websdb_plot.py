@@ -20,8 +20,9 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 from qgis.PyQt import QtWidgets, uic
 from qgis.PyQt.QtCore import Qt
 
+# the backend must be selected before apsg imports matplotlib.pyplot
 matplotlib.use("QtAgg")
-from apsg import StereoNet, apsg_conf, fol, folset, lin, linset
+from apsg import StereoNet, apsg_conf, fol, folset, lin, linset  # noqa: E402
 
 apsg_conf.dpi = 100
 
