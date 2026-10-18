@@ -30,7 +30,6 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
     QgsSettings,
-    QgsWkbTypes,
 )
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import (
@@ -42,7 +41,6 @@ from qgis.PyQt.QtCore import (
     Qt,
     QTranslator,
     QVariant,
-    qVersion,
 )
 from qgis.PyQt.QtGui import QCursor, QIcon
 from qgis.PyQt.QtWidgets import QAction
@@ -50,32 +48,36 @@ from qgis.PyQt.QtWidgets import QAction
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # import included packages
-from apsg import folset, linset
-from geomag import geomag
+from apsg import folset, linset  # noqa: E402
+from geomag import geomag  # noqa: E402
 
 # project
-from websdb.__about__ import (
+from websdb.__about__ import (  # noqa: E402
     DIR_PLUGIN_ROOT,
     __title__,
 )
-from websdb.api_response import ApiAuthError, ApiConnectionError, ApiError
-from websdb.data_mapping import (
+from websdb.api_response import ApiAuthError, ApiConnectionError, ApiError  # noqa: E402
+from websdb.data_mapping import (  # noqa: E402
     build_geojson_feature,
     filter_geodata,
     group_by_datatype,
     resolve_rock_map,
 )
-from websdb.grid_average import bounding_box, interpolate_grid, preset_grid_size
-from websdb.toolbelt import PlgLogger
-from websdb.toolbelt.api_client import ApiClient
+from websdb.grid_average import (  # noqa: E402
+    bounding_box,
+    interpolate_grid,
+    preset_grid_size,
+)
+from websdb.toolbelt import PlgLogger  # noqa: E402
+from websdb.toolbelt.api_client import ApiClient  # noqa: E402
 
 # Import the code for the dialog
-from .websdb_average import WebSDBAverageDialog
-from .websdb_import import WebSDBImportLayer
-from .websdb_open import WebSDBOpenDialog
-from .websdb_options import WebSDBOptionsDialog
-from .websdb_plot import WebSDBPlotDialog
-from .websdb_structures import WebSDBStructuresDialog
+from .websdb_average import WebSDBAverageDialog  # noqa: E402
+from .websdb_import import WebSDBImportLayer  # noqa: E402
+from .websdb_open import WebSDBOpenDialog  # noqa: E402
+from .websdb_options import WebSDBOptionsDialog  # noqa: E402
+from .websdb_plot import WebSDBPlotDialog  # noqa: E402
+from .websdb_structures import WebSDBStructuresDialog  # noqa: E402
 
 GM = geomag.GeoMag()
 
@@ -477,18 +479,18 @@ class WebSDBPlugin:
 
         if point is None:
             point = self.iface.mapCanvas().extent().center()
-        point_ll = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
+        point_ll = xform.transform(point, Qgis.TransformDirection.Forward)
 
         if point_ll.y() < 89.9:
             point_ll_shift = QgsPointXY(point_ll.x(), point_ll.y() + 0.01)
             point_north = xform.transform(
-                point_ll_shift, QgsCoordinateTransform.ReverseTransform
+                point_ll_shift, Qgis.TransformDirection.Reverse
             )
             gc = point.azimuth(point_north)
         else:
             point_ll_shift = QgsPointXY(point_ll.x(), point_ll.y() - 0.01)
             point_north = xform.transform(
-                point_ll_shift, QgsCoordinateTransform.ReverseTransform
+                point_ll_shift, Qgis.TransformDirection.Reverse
             )
             gc = point_north.azimuth(point)
         return gc
@@ -506,7 +508,7 @@ class WebSDBPlugin:
 
         if point is None:
             point = self.iface.mapCanvas().extent().center()
-        point_ll = xform.transform(point, QgsCoordinateTransform.ForwardTransform)
+        point_ll = xform.transform(point, Qgis.TransformDirection.Forward)
         if time is None:
             time = datetime.datetime.now(datetime.UTC).date()
         mag = GM.GeoMag(point_ll.y(), point_ll.x(), time=time)
@@ -600,7 +602,7 @@ class WebSDBPlugin:
         for key in fields:
             lyr_fields.append(QgsField(key, fields[key]))
         layer = QgsMemoryProviderUtils.createMemoryLayer(
-            name, lyr_fields, QgsWkbTypes.Point, crs
+            name, lyr_fields, Qgis.WkbType.Point, crs
         )
         return layer
 
@@ -631,9 +633,7 @@ class WebSDBPlugin:
                     continue
                 feature = QgsFeature()
                 point = QgsPointXY(site["lon"], site["lat"])
-                point_canvas = xform.transform(
-                    point, QgsCoordinateTransform.ForwardTransform
-                )
+                point_canvas = xform.transform(point, Qgis.TransformDirection.Forward)
                 feature.setGeometry(QgsGeometry.fromPointXY(point_canvas))
                 feature.setAttributes(
                     [site["id"], site["name"], self.sanitize(site.get("description"))]
@@ -682,66 +682,16 @@ class WebSDBPlugin:
             self._handle_api_error(err)
             return
 
-        self.structures_dlg.comboStructure.clear()
-        self.structures_dlg.comboStructure.addItem(self.tr("Any"), None)
-        for structype in structypes:
-            self.structures_dlg.comboStructure.addItem(
-                structype["name"], structype["id"]
-            )
-        self.structures_dlg.comboUnit.clear()
-        self.structures_dlg.comboUnit.addItem(self.tr("Any"), None)
-        for unit in units:
-            self.structures_dlg.comboUnit.addItem(unit["name"], unit["id"])
-        self.structures_dlg.radioFoliation.setChecked(True)
-        self.structures_dlg.checkAverage.setChecked(False)
-        self.structures_dlg.checkSelected.setEnabled(selected_enable)
-        self.structures_dlg.checkSelected.setChecked(selected_enable)
-        self.structures_dlg.listTags.clear()
-        for tag in tags:
-            self.structures_dlg.listTags.addItem(tag["name"])
+        self._populate_structures_dialog(structypes, units, tags, selected_enable)
         # Run the dialog event loop
         result = self.structures_dlg.exec()
         if not result:
             return
 
         QgsApplication.instance().setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        structype_id = self.structures_dlg.comboStructure.currentData()
         try:
-            structype_id = self.structures_dlg.comboStructure.currentData()
-            unit_id = self.structures_dlg.comboUnit.currentData()
-            datatype = (
-                "Foliation"
-                if self.structures_dlg.radioFoliation.isChecked()
-                else "Lineation"
-            )
-            selected_tags = [
-                item.text() for item in self.structures_dlg.listTags.selectedItems()
-            ]
-
-            rocks = self.api.list_rocks(self.project_id)
-            rock_map = resolve_rock_map(rocks)
-            sites = self.api.list_sites(self.project_id)
-            site_map = {site["id"]: site for site in sites}
-            geodata_rows = self.api.list_geodata(
-                self.project_id, structype_id=structype_id
-            )
-
-            site_ids = None
-            if selected_enable and self.structures_dlg.checkSelected.isChecked():
-                selected_names = {
-                    f["name"] for f in self.sites_layer.selectedFeatures()
-                }
-                site_ids = {
-                    sid for sid, s in site_map.items() if s["name"] in selected_names
-                }
-
-            rows = filter_geodata(
-                geodata_rows,
-                rock_map,
-                datatype=datatype,
-                unit_id=unit_id,
-                tags=selected_tags,
-                site_ids=site_ids,
-            )
+            rows, site_map = self._fetch_structure_rows(structype_id, selected_enable)
         except (ApiAuthError, ApiConnectionError, ApiError) as err:
             restore_cursor()
             self._handle_api_error(err)
@@ -782,107 +732,20 @@ class WebSDBPlugin:
 
             off_coef = 1.0 if is_planar else self.settings.value("linmulti", type=float)
 
-            by_site = {}
-            for row in group_rows:
-                by_site.setdefault(row["site_id"], []).append(row)
-
-            out_rows = []
-            if average:
-                for site_id, site_rows in by_site.items():
-                    azi = [r["azimuth"] for r in site_rows]
-                    inc = [r["inclination"] for r in site_rows]
-                    if is_planar:
-                        g = folset.from_array(azi, inc)
-                        dd = g.ortensor().eigenfols()[0].geo
-                    else:
-                        g = linset.from_array(azi, inc)
-                        dd = g.ortensor().eigenlins()[0].geo
-                    first = site_rows[0]
-                    out_rows.append(
-                        {
-                            "site_id": site_id,
-                            "azimuth": float(dd[0]),
-                            "inclination": float(dd[1]),
-                            "rock": first["rock"],
-                            "unit": unit_names.get(first["unit_id"], ""),
-                            "structype": structype_names.get(first["structype_id"], ""),
-                            "tags": "",
-                            "description": (
-                                f"Averaged from {len(site_rows)} data"
-                                if len(site_rows) > 1
-                                else None
-                            ),
-                            "pair_id": None,
-                        }
-                    )
-            else:
-                for row in group_rows:
-                    out_rows.append(
-                        {
-                            "site_id": row["site_id"],
-                            "azimuth": row["azimuth"],
-                            "inclination": row["inclination"],
-                            "rock": row["rock"],
-                            "unit": unit_names.get(row["unit_id"], ""),
-                            "structype": structype_names.get(row["structype_id"], ""),
-                            "tags": ", ".join(row["tags"]),
-                            "description": self.sanitize(row["description"]),
-                            "pair_id": row["pair_id"],
-                        }
-                    )
-
+            out_rows = self._structure_records(
+                group_rows, is_planar, average, unit_names, structype_names
+            )
             for rec in out_rows:
                 site = site_map.get(rec["site_id"])
                 if site is None or site.get("lon") is None or site.get("lat") is None:
                     continue
-                feature = QgsFeature()
-                point = QgsPointXY(site["lon"], site["lat"])
-                # reproject into the project crs - this layer's crs is now the
-                # project crs, and azimuth corrections are also evaluated at this point
-                point_canvas = xform.transform(
-                    point, QgsCoordinateTransform.ForwardTransform
+                provider.addFeatures(
+                    [
+                        self._structure_feature(
+                            rec, site, xform, md_time, is_planar, off_coef
+                        )
+                    ]
                 )
-                feature.setGeometry(QgsGeometry.fromPointXY(point_canvas))
-                delta = 0
-                delta += (
-                    self.calc_gc(point=point_canvas)
-                    if self.settings.value("auto_gc", type=bool)
-                    else self.settings.value("angle_gc", type=float)
-                )
-                delta += (
-                    self.calc_md(point=point_canvas, time=md_time)
-                    if self.settings.value("auto_md", type=bool)
-                    else self.settings.value("angle_md", type=float)
-                )
-                rotation = rec["azimuth"] + delta
-                # calculate label offset
-                offx = (
-                    off_coef
-                    * self.settings.value("offset", type=float)
-                    * sin(rotation * pi / 180.0)
-                )
-                offy = (
-                    -off_coef
-                    * self.settings.value("offset", type=float)
-                    * cos(rotation * pi / 180.0)
-                )
-                atts = [
-                    site["name"],
-                    rec["unit"],
-                    rec["azimuth"],
-                    rec["inclination"],
-                    rec["structype"],
-                    rec["tags"],
-                    rec["description"],
-                    1 if is_planar else 0,
-                    rotation,
-                    round(float(rec["inclination"])),
-                    f"{offx},{offy}",
-                    rec["rock"],
-                    rec["pair_id"],
-                ]
-                feature.setAttributes(atts)
-                provider.addFeatures([feature])
 
             layer.commitChanges()
             if layer.featureCount() > 0:
@@ -907,6 +770,170 @@ class WebSDBPlugin:
                 "WebSDB", self.tr("No structures found. Choose different criteria")
             )
 
+    def _populate_structures_dialog(self, structypes, units, tags, selected_enable):
+        """Fill the structures filter dialog with the project's structypes,
+        units and tags, and reset its other widgets."""
+        self.structures_dlg.comboStructure.clear()
+        self.structures_dlg.comboStructure.addItem(self.tr("Any"), None)
+        for structype in structypes:
+            self.structures_dlg.comboStructure.addItem(
+                structype["name"], structype["id"]
+            )
+        self.structures_dlg.comboUnit.clear()
+        self.structures_dlg.comboUnit.addItem(self.tr("Any"), None)
+        for unit in units:
+            self.structures_dlg.comboUnit.addItem(unit["name"], unit["id"])
+        self.structures_dlg.radioFoliation.setChecked(True)
+        self.structures_dlg.checkAverage.setChecked(False)
+        self.structures_dlg.checkSelected.setEnabled(selected_enable)
+        self.structures_dlg.checkSelected.setChecked(selected_enable)
+        self.structures_dlg.listTags.clear()
+        for tag in tags:
+            self.structures_dlg.listTags.addItem(tag["name"])
+
+    def _fetch_structure_rows(self, structype_id, selected_enable):
+        """Fetch rocks, sites and geodata and filter them by the structures
+        dialog criteria. Returns (rows, site_map); raises ApiError subclasses."""
+        unit_id = self.structures_dlg.comboUnit.currentData()
+        datatype = (
+            "Foliation"
+            if self.structures_dlg.radioFoliation.isChecked()
+            else "Lineation"
+        )
+        selected_tags = [
+            item.text() for item in self.structures_dlg.listTags.selectedItems()
+        ]
+
+        rocks = self.api.list_rocks(self.project_id)
+        rock_map = resolve_rock_map(rocks)
+        sites = self.api.list_sites(self.project_id)
+        site_map = {site["id"]: site for site in sites}
+        geodata_rows = self.api.list_geodata(self.project_id, structype_id=structype_id)
+
+        site_ids = None
+        if selected_enable and self.structures_dlg.checkSelected.isChecked():
+            selected_names = {f["name"] for f in self.sites_layer.selectedFeatures()}
+            site_ids = {
+                sid for sid, s in site_map.items() if s["name"] in selected_names
+            }
+
+        rows = filter_geodata(
+            geodata_rows,
+            rock_map,
+            datatype=datatype,
+            unit_id=unit_id,
+            tags=selected_tags,
+            site_ids=site_ids,
+        )
+        return rows, site_map
+
+    def _structure_records(
+        self, group_rows, is_planar, average, unit_names, structype_names
+    ):
+        """Turn filtered geodata rows into output records, either one per
+        measurement or one per site averaged via the orientation tensor."""
+        if not average:
+            return [
+                {
+                    "site_id": row["site_id"],
+                    "azimuth": row["azimuth"],
+                    "inclination": row["inclination"],
+                    "rock": row["rock"],
+                    "unit": unit_names.get(row["unit_id"], ""),
+                    "structype": structype_names.get(row["structype_id"], ""),
+                    "tags": ", ".join(row["tags"]),
+                    "description": self.sanitize(row["description"]),
+                    "pair_id": row["pair_id"],
+                }
+                for row in group_rows
+            ]
+
+        by_site = {}
+        for row in group_rows:
+            by_site.setdefault(row["site_id"], []).append(row)
+
+        out_rows = []
+        for site_id, site_rows in by_site.items():
+            azi = [r["azimuth"] for r in site_rows]
+            inc = [r["inclination"] for r in site_rows]
+            if is_planar:
+                g = folset.from_array(azi, inc)
+                dd = g.ortensor().eigenfols()[0].geo
+            else:
+                g = linset.from_array(azi, inc)
+                dd = g.ortensor().eigenlins()[0].geo
+            first = site_rows[0]
+            out_rows.append(
+                {
+                    "site_id": site_id,
+                    "azimuth": float(dd[0]),
+                    "inclination": float(dd[1]),
+                    "rock": first["rock"],
+                    "unit": unit_names.get(first["unit_id"], ""),
+                    "structype": structype_names.get(first["structype_id"], ""),
+                    "tags": "",
+                    "description": (
+                        f"Averaged from {len(site_rows)} data"
+                        if len(site_rows) > 1
+                        else None
+                    ),
+                    "pair_id": None,
+                }
+            )
+        return out_rows
+
+    def _structure_feature(self, rec, site, xform, md_time, is_planar, off_coef):
+        """Build the QgsFeature for one structure record at its site, with the
+        symbol rotation and label offset corrected for grid convergence and
+        magnetic declination."""
+        feature = QgsFeature()
+        point = QgsPointXY(site["lon"], site["lat"])
+        # reproject into the project crs - this layer's crs is now the
+        # project crs, and azimuth corrections are also evaluated at this point
+        point_canvas = xform.transform(point, Qgis.TransformDirection.Forward)
+        feature.setGeometry(QgsGeometry.fromPointXY(point_canvas))
+        delta = 0
+        delta += (
+            self.calc_gc(point=point_canvas)
+            if self.settings.value("auto_gc", type=bool)
+            else self.settings.value("angle_gc", type=float)
+        )
+        delta += (
+            self.calc_md(point=point_canvas, time=md_time)
+            if self.settings.value("auto_md", type=bool)
+            else self.settings.value("angle_md", type=float)
+        )
+        rotation = rec["azimuth"] + delta
+        # calculate label offset
+        offx = (
+            off_coef
+            * self.settings.value("offset", type=float)
+            * sin(rotation * pi / 180.0)
+        )
+        offy = (
+            -off_coef
+            * self.settings.value("offset", type=float)
+            * cos(rotation * pi / 180.0)
+        )
+        feature.setAttributes(
+            [
+                site["name"],
+                rec["unit"],
+                rec["azimuth"],
+                rec["inclination"],
+                rec["structype"],
+                rec["tags"],
+                rec["description"],
+                1 if is_planar else 0,
+                rotation,
+                round(float(rec["inclination"])),
+                f"{offx},{offy}",
+                rec["rock"],
+                rec["pair_id"],
+            ]
+        )
+        return feature
+
     def _build_sites_geojson(self, layer, site_field, desc_field):
         """Build a WGS84 GeoJSON FeatureCollection from a QGIS point layer."""
         crsSrc = layer.crs()
@@ -915,9 +942,7 @@ class WebSDBPlugin:
         features = []
         for feature in layer.getFeatures():
             point = feature.geometry().asPoint()
-            point_wgs84 = xform.transform(
-                point, QgsCoordinateTransform.ForwardTransform
-            )
+            point_wgs84 = xform.transform(point, Qgis.TransformDirection.Forward)
             name = str(feature[site_field])
             desc = self.sanitize(str(feature[desc_field])) if desc_field else ""
             features.append(
@@ -1068,9 +1093,7 @@ class WebSDBPlugin:
 
         for rec in results:
             point = QgsPointXY(rec["x"], rec["y"])
-            point_canvas = xform.transform(
-                point, QgsCoordinateTransform.ForwardTransform
-            )
+            point_canvas = xform.transform(point, Qgis.TransformDirection.Forward)
             delta = (
                 self.calc_gc(point=point_canvas)
                 if self.settings.value("auto_gc", type=bool)

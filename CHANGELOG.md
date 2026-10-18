@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.3 - 2026-10-18
+
+- Use scoped `Qgis` enums (`TransformDirection`, `WkbType`, `LayerFilter`,
+  `FieldProxyModelFilter`) for QGIS 4 / PyQt6 compatibility.
+
 ## 1.0.2 - 2026-10-18
 
 - Vendored APSG patched to pass the Bandit security scan: `assert` statements replaced with

@@ -14,7 +14,7 @@
 
 import os
 
-from qgis.core import QgsFieldProxyModel, QgsMapLayerProxyModel, QgsProject
+from qgis.core import Qgis, QgsProject
 from qgis.gui import QgsFieldComboBox, QgsMapLayerComboBox
 from qgis.PyQt import QtWidgets, uic
 from qgis.PyQt.QtCore import Qt
@@ -35,14 +35,14 @@ class WebSDBImportLayer(QtWidgets.QDialog, FORM_CLASS):
         self.websdb = websdb
         if websdb.sites_layer in QgsProject.instance().mapLayers().values():
             self.layerCombo.setLayer(websdb.sites_layer)
-        self.layerCombo.setFilters(QgsMapLayerProxyModel.PointLayer)
+        self.layerCombo.setFilters(Qgis.LayerFilter.PointLayer)
         self.horizontalLayoutLayer.addWidget(self.layerCombo)
         self.siteCombo = QgsFieldComboBox()
-        self.siteCombo.setFilters(QgsFieldProxyModel.String)
+        self.siteCombo.setFilters(Qgis.FieldProxyModelFilter.String)
         self.siteCombo.setAllowEmptyFieldName(False)
         self.verticalLayoutRequired.addWidget(self.siteCombo)
         self.descCombo = QgsFieldComboBox()
-        self.descCombo.setFilters(QgsFieldProxyModel.String)
+        self.descCombo.setFilters(Qgis.FieldProxyModelFilter.String)
         self.descCombo.setAllowEmptyFieldName(True)
         self.verticalLayoutOtional.addWidget(self.descCombo)
         self.layer_changed()
