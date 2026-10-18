@@ -8,17 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.2 - 2026-10-18
+
+- Vendored APSG patched to pass the Bandit security scan: `assert` statements replaced with
+  exceptions, `random` replaced with NumPy's generator, unused pickle-based `save()`/`load()`
+  methods removed.
+- Fixed "structures read successfully" and "grid points interpolated" notifications showing
+  `{layer.featureCount()}` instead of the number of features.
+
 ## 1.0.1 - 2026-10-18
 
 - Updated vendored APSG to 2.0.6 (new stereonet engine; contour densities are now in standard
   deviations above random).
 - Stereonet contours now use the Kamb method; replaced the contour "Resolution" setting
   with "Sigma" (Kamb smoothing, default 3.0).
-- Vendored APSG patched to pass the Bandit security scan: `assert` statements replaced with
-  exceptions, `random` replaced with NumPy's generator, unused pickle-based `save()`/`load()`
-  methods removed.
-- Fixed "structures read successfully" and "grid points interpolated" notifications showing
-  `{layer.featureCount()}` instead of the number of features.
 
 ## 1.0.0 - 2026-08-03
 
