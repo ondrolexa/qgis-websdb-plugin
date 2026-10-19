@@ -2,8 +2,6 @@ import math
 from datetime import datetime
 
 import numpy as np
-from scipy import linalg as spla
-from scipy.spatial.transform import Rotation
 
 from apsg.config import apsg_conf, stress_sign
 from apsg.feature._geodata import Fault, Foliation, Lineation, Pair
@@ -112,6 +110,7 @@ class DeformationGradient3(Matrix3):
     @property
     def R(self):
         """Return rotation part of ``DeformationGradient3`` from polar decomposition."""
+        from scipy import linalg as spla
 
         R, _ = spla.polar(self)
         return Rotation3(R)
@@ -119,6 +118,7 @@ class DeformationGradient3(Matrix3):
     @property
     def U(self):
         """Return stretching part of ``DeformationGradient3`` from right polar."""
+        from scipy import linalg as spla
 
         _, U = spla.polar(self, "right")
         return DeformationGradient3(U)
@@ -126,6 +126,7 @@ class DeformationGradient3(Matrix3):
     @property
     def V(self):
         """Return stretching part of ``DeformationGradient3`` from left polar."""
+        from scipy import linalg as spla
 
         _, V = spla.polar(self, "left")
         return DeformationGradient3(V)
@@ -155,6 +156,7 @@ class DeformationGradient3(Matrix3):
         Returns:
             VelocityGradient3: ``VelocityGradient3`` calculated as matrix logarithm divided by given time.
         """
+        from scipy import linalg as spla
         return VelocityGradient3(spla.logm(np.asarray(self)) / time)
 
     def flow_apophyses(self):
@@ -246,6 +248,7 @@ class Rotation3(DeformationGradient3):
 
     def axisangle(self):
         """Return rotation as (axis, angle) tuple."""
+        from scipy.spatial.transform import Rotation
 
         rotvec = Rotation.from_matrix(self).as_rotvec(degrees=True)
         sign = 1.0
@@ -255,6 +258,7 @@ class Rotation3(DeformationGradient3):
 
     def angle(self):
         """Return rotation angle."""
+        from scipy.spatial.transform import Rotation
 
         rotvec = Rotation.from_matrix(self).as_rotvec(degrees=True)
         sign = 1.0
@@ -274,6 +278,7 @@ class Rotation3(DeformationGradient3):
         Returns:
             ndarray: rotation as Euler angles specified in degrees.
         """
+        from scipy.spatial.transform import Rotation
         return Rotation.from_matrix(self).as_euler(seq, degrees=True)
 
     def quat(self, scalar_first=False):
@@ -285,6 +290,7 @@ class Rotation3(DeformationGradient3):
         Returns:
             ndarray: rotation as quaternion.
         """
+        from scipy.spatial.transform import Rotation
         return Rotation.from_matrix(self).as_quat(canonical=True)
 
     @classmethod
@@ -339,8 +345,14 @@ class Rotation3(DeformationGradient3):
             raise TypeError(
                 "Unsupported argument for from_axisangle. Expecting Vector3"
             ) from err
-        rotvec = theta * np.array(vector.uv())
-        return cls(Rotation.from_rotvec(rotvec, degrees=True).as_matrix())
+        # Rodrigues' formula in numpy, so the plugin's rotation path needs no scipy
+        rotvec = np.radians(theta) * np.array(vector.uv())
+        angle = np.linalg.norm(rotvec)
+        if angle == 0:
+            return cls(np.eye(3))
+        kx, ky, kz = rotvec / angle
+        K = np.array([[0, -kz, ky], [kz, 0, -kx], [-ky, kx, 0]])
+        return cls(np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K)
 
     @classmethod
     def from_two_vectors(cls, v1, v2):
@@ -550,6 +562,7 @@ class Rotation3(DeformationGradient3):
         Returns:
             Rotation3: ``Rotation3`` representing rotation of coordinates created from unit norm quaternion.
         """
+        from scipy.spatial.transform import Rotation
         return cls(Rotation.from_quat(quat).as_matrix())
 
     @classmethod
@@ -573,6 +586,7 @@ class Rotation3(DeformationGradient3):
         Returns:
             Rotation3: ``Rotation3`` representing rotation of coordinates created from Euler angles.
         """
+        from scipy.spatial.transform import Rotation
         return cls(Rotation.from_euler(seq, angles, degrees=True).as_matrix())
 
 
@@ -636,6 +650,7 @@ class VelocityGradient3(Matrix3):
         Returns:
             DeformationGradient3: ``DeformationGradient3`` tensor accumulated after given time.
         """
+        from scipy import linalg as spla
         if steps > 1:  # FIX once container for matrix will be implemented
             return [
                 DeformationGradient3(spla.expm(np.asarray(self) * t))

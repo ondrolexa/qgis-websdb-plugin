@@ -1,7 +1,6 @@
 import math
 
 import numpy as np
-from scipy import linalg as spla
 
 from apsg.config import apsg_conf, stress_sign
 from apsg.helpers._math import atan2d, cosd, sind
@@ -80,23 +79,27 @@ class DeformationGradient2(Matrix2):
     @property
     def R(self):
         """Return rotation part of ``DeformationGradient2`` from polar decomposition."""
+        from scipy import linalg as spla
         R, _ = spla.polar(self)
         return Rotation2(R)
 
     @property
     def U(self):
         """Return stretching part of ``DeformationGradient2`` from right polar decomposition."""
+        from scipy import linalg as spla
         _, U = spla.polar(self, "right")
         return DeformationGradient2(U)
 
     @property
     def V(self):
         """Return stretching part of ``DeformationGradient2`` from left polar decomposition."""
+        from scipy import linalg as spla
         _, V = spla.polar(self, "left")
         return DeformationGradient2(V)
 
     def velgrad(self, time=1):
         """Return ``VelocityGradient2`` for given time."""
+        from scipy import linalg as spla
         return VelocityGradient2(spla.logm(np.asarray(self)) / time)
 
     @classmethod
@@ -274,6 +277,7 @@ class VelocityGradient2(Matrix2):
         Returns:
             DeformationGradient2: ``DeformationGradient2`` tensor accumulated after given time.
         """
+        from scipy import linalg as spla
         if steps > 1:  # FIX once container for matrix will be implemented
             return [
                 DeformationGradient2(spla.expm(np.asarray(self) * t))

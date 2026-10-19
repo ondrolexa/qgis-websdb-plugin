@@ -1,24 +1,38 @@
 #! python3  # noqa E265
 
 """
-    Usage from the repo root folder:
+Usage from the repo root folder:
 
-    .. code-block:: bash
-        # for whole tests
-        python -m unittest tests.unit.test_grid_average
-        # for specific test
-        python -m unittest tests.unit.test_grid_average.TestBoundingBox.test_bounding_box
+.. code-block:: bash
+    # for whole tests
+    python -m unittest tests.unit.test_grid_average
+    # for specific test
+    python -m unittest tests.unit.test_grid_average.TestBoundingBox.test_bounding_box
 """
 
 # standard library
+import os
+import subprocess
+import sys
 import unittest
+
+# 3rd party
+import numpy as np
+
+try:
+    from scipy.spatial.transform import Rotation as SciRot
+except ImportError:
+    SciRot = None
 
 # project
 from websdb.grid_average import (
     bounding_box,
     build_grid_axes,
     interpolate_grid,
+    matrices_to_quats,
     preset_grid_size,
+    quat_to_matrix,
+    weighted_quat_mean,
 )
 
 
@@ -55,7 +69,9 @@ class TestBuildGridAxes(unittest.TestCase):
 
 class TestInterpolateGrid(unittest.TestCase):
     def test_empty_points_returns_empty(self):
-        self.assertEqual(interpolate_grid([], True, grid_size=10.0, weigth_limit=0.5), [])
+        self.assertEqual(
+            interpolate_grid([], True, grid_size=10.0, weigth_limit=0.5), []
+        )
 
     def test_single_planar_point_reproduces_itself_everywhere(self):
         points = [(0.0, 0.0, 30.0, 40.0)]
@@ -88,7 +104,67 @@ class TestInterpolateGrid(unittest.TestCase):
 
     def test_zero_grid_size_returns_empty(self):
         points = [(0.0, 0.0, 30.0, 40.0)]
-        self.assertEqual(interpolate_grid(points, True, grid_size=0, weigth_limit=0.5), [])
+        self.assertEqual(
+            interpolate_grid(points, True, grid_size=0, weigth_limit=0.5), []
+        )
+
+
+class TestQuaternionMean(unittest.TestCase):
+    def test_roundtrip_matrix_quat_matrix(self):
+        rng = np.random.default_rng(0)
+        q = rng.normal(size=(200, 4))
+        q /= np.linalg.norm(q, axis=1)[:, None]
+        mats = np.array([quat_to_matrix(x) for x in q])
+        back = np.array([quat_to_matrix(x) for x in matrices_to_quats(mats)])
+        np.testing.assert_allclose(back, mats, atol=1e-12)
+
+    def test_mean_ignores_quaternion_sign(self):
+        q = matrices_to_quats([np.eye(3), np.eye(3)])
+        q[1] *= -1
+        mean = quat_to_matrix(weighted_quat_mean(q, np.array([1.0, 1.0])))
+        np.testing.assert_allclose(mean, np.eye(3), atol=1e-12)
+
+    @unittest.skipIf(SciRot is None, "scipy not installed")
+    def test_matches_scipy_weighted_mean(self):
+        rots = SciRot.random(50, random_state=1)
+        w = np.random.default_rng(2).random(50)
+        ours = quat_to_matrix(
+            weighted_quat_mean(matrices_to_quats(rots.as_matrix()), w)
+        )
+        np.testing.assert_allclose(ours, rots.mean(weights=w).as_matrix(), atol=1e-10)
+
+
+class TestWithoutScipy(unittest.TestCase):
+    """The plugin's apsg paths must work when scipy isn't installed in QGIS."""
+
+    def test_plugin_paths_import_and_run_without_scipy(self):
+        code = """
+import sys
+sys.modules["scipy"] = None  # makes any ``import scipy...`` raise ImportError
+import matplotlib
+matplotlib.use("Agg")
+from websdb.grid_average import interpolate_grid
+from apsg import StereoNet, fol, folset, lin, linset
+g = folset([fol(30, 40), fol(35, 45), fol(25, 50)])
+g.ortensor().eigenfols()
+linset([lin(120, 15), lin(125, 20)]).ortensor().eigenlins()
+net = StereoNet()
+net.init_figure()
+net.contour(g, method="kamb", levels=5, sigma=1)
+net.great_circle(*g.ortensor().eigenfols())
+net._render()
+res = interpolate_grid(
+    [(0.0, 0.0, 30.0, 40.0), (5.0, 0.0, 60.0, 20.0)], True, 10.0, 0.5
+)
+assert res
+"""
+        repo = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code], cwd=repo, capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 if __name__ == "__main__":

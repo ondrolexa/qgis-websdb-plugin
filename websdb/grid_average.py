@@ -13,14 +13,13 @@
 # --------------------------------------------------------------------
 
 """Spatially-weighted interpolation of structural orientations onto a
-regular grid. Pure Python/numpy/scipy/apsg — no ``qgis`` import, so it can be
+regular grid. Pure Python/numpy/apsg — no ``qgis`` import, so it can be
 exercised by ``tests/unit`` without a live QGIS install."""
 
 import os
 import sys
 
 import numpy as np
-from scipy.spatial.transform import Rotation as SciRot
 
 # the vendored apsg package lives at websdb/apsg/ - extend sys.path the same
 # way plugin_main.py does, so this module also resolves it when imported
@@ -59,6 +58,46 @@ def build_grid_axes(xmin, xmax, ymin, ymax, grid_size):
     return xmin_ext + np.arange(nx) * grid_size, ymin_ext + np.arange(ny) * grid_size
 
 
+def matrices_to_quats(mats):
+    """(n, 3, 3) rotation matrices -> (n, 4) unit quaternions (x, y, z, w).
+    Shepperd's method: build from the largest of w, x, y, z for stability."""
+    mats = np.asarray(mats, dtype=float)
+    m00, m11, m22 = mats[:, 0, 0], mats[:, 1, 1], mats[:, 2, 2]
+    tr = m00 + m11 + m22
+    choice = np.argmax(np.stack([m00, m11, m22, tr], axis=1), axis=1)
+    q = np.empty((len(mats), 4))
+    for i, (R, c) in enumerate(zip(mats, choice)):
+        if c == 3:
+            q[i] = [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1], 1 + tr[i]]
+        else:
+            j, k = (c + 1) % 3, (c + 2) % 3
+            q[i, c] = 1 + R[c, c] - R[j, j] - R[k, k]
+            q[i, j] = R[j, c] + R[c, j]
+            q[i, k] = R[k, c] + R[c, k]
+            q[i, 3] = R[k, j] - R[j, k]
+    return q / np.linalg.norm(q, axis=1)[:, None]
+
+
+def quat_to_matrix(q):
+    """Unit quaternion (x, y, z, w) -> 3x3 rotation matrix."""
+    x, y, z, w = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def weighted_quat_mean(quats, weights):
+    """Weighted mean rotation (Markley et al. 2007): the eigenvector of
+    sum(w q q^T) with the largest eigenvalue. Insensitive to the q/-q sign
+    ambiguity, same as ``scipy.spatial.transform.Rotation.mean``."""
+    _, vecs = np.linalg.eigh((quats.T * weights) @ quats)
+    return vecs[:, -1]
+
+
 def interpolate_grid(points, is_planar, grid_size, weigth_limit):
     """points: list of (x, y, azi, inc). Returns a list of
     {"x", "y", "azi", "inc", "weight"} dicts, one per grid point whose
@@ -74,7 +113,7 @@ def interpolate_grid(points, is_planar, grid_size, weigth_limit):
         rotation.from_two_vectors(ref, fol(azi, inc) if is_planar else lin(azi, inc))
         for _, _, azi, inc in points
     ]
-    scirots = SciRot.from_matrix(np.array([np.asarray(R) for R in rots]))
+    quats = matrices_to_quats([np.asarray(R) for R in rots])
 
     xmin, xmax, ymin, ymax = bounding_box([(p[0], p[1]) for p in points])
     xs, ys = build_grid_axes(xmin, xmax, ymin, ymax, grid_size)
@@ -86,7 +125,7 @@ def interpolate_grid(points, is_planar, grid_size, weigth_limit):
             wt = float(w.sum())
             if wt <= weigth_limit:
                 continue
-            mean_rot = rotation(scirots.mean(weights=w).as_matrix())
+            mean_rot = rotation(quat_to_matrix(weighted_quat_mean(quats, w)))
             azi, inc = ref.transform(mean_rot).geo
             results.append(
                 {

@@ -4,13 +4,6 @@ from os.path import basename
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy import linalg as spla
-from scipy import stats
-from scipy.cluster.hierarchy import dendrogram, fcluster, linkage
-from scipy.integrate import quad
-from scipy.optimize import root_scalar
-from scipy.spatial.distance import cdist
-from scipy.spatial.transform import Rotation
 
 from apsg.config import apsg_conf, stress_sign
 from apsg.feature._geodata import (
@@ -415,6 +408,7 @@ class Vector2Set(FeatureSet):
                 statistic), ``p_value``, and ``uniform`` (True if data is consistent
                 with a uniform/random distribution at the given confidence level).
         """
+        from scipy import stats
         N = len(self)
         R = abs(self.normalized().R())
         statistic = 2 * R**2 / N
@@ -537,6 +531,7 @@ class Vector2Set(FeatureSet):
         Returns:
             Vector2Set: The created feature set.
         """
+        from scipy import stats
         angles = np.degrees(stats.vonmises.rvs(kappa, loc=np.radians(position), size=n))
         return cls([cls.__feature_class__(a) for a in angles], name=name)
 
@@ -742,6 +737,7 @@ class Vector3Set(FeatureSet):
             Calculated alpha for level 0.95 means, you can be 95% confident that
             the true population mean axis lies within alpha degrees of the mu.
         """
+        from scipy.optimize import root_scalar
 
         def kappa_estimate(N, R):
             """Maximum-likelihood estimate of the Fisher concentration parameter κ."""
@@ -825,6 +821,7 @@ class Vector3Set(FeatureSet):
                 statistic), ``p_value``, and ``uniform`` (True if data is consistent
                 with a uniform/random distribution at the given confidence level).
         """
+        from scipy import stats
         N = len(self)
         R = abs(self.normalized().R())
         statistic = 3 * R**2 / N
@@ -849,6 +846,8 @@ class Vector3Set(FeatureSet):
             Calculated alpha for level 0.95 means, you can be 95% confident that
             the true population mean axis lies within alpha degrees of the mu.
         """
+        from scipy.integrate import quad
+        from scipy.optimize import root_scalar
 
         # Objective: integrate(u^2 * exp(k*u^2)) / integrate(exp(k*u^2)) - lambda_1 = 0
         def objective_function(k):
@@ -935,6 +934,7 @@ class Vector3Set(FeatureSet):
                 (tuple of the corresponding semi-angles in degrees), ``n``
                 (sample size), ``level`` and ``which``.
         """
+        from scipy import stats
 
         if which not in (0, 1, 2):
             raise ValueError("which must be 0, 1 or 2")
@@ -1049,6 +1049,8 @@ class Vector3Set(FeatureSet):
         Returns:
             tuple: (statistic, p-value, reject_H0) where reject_H0 is False for different distributions.
         """
+        from scipy import stats
+        from scipy.spatial.distance import cdist
 
         method = kwargs.get("method", "energy_distance")
         alpha = kwargs.get("alpha", 0.05)
@@ -1138,6 +1140,7 @@ class Vector3Set(FeatureSet):
 
     def align(self, other):
         """Return best estimate rotation as `Rotation3` to align with others."""
+        from scipy.spatial.transform import Rotation
 
         R = Rotation.align_vectors(np.array(other), np.array(self))[0]
         return Rotation3(R.as_matrix())
@@ -2306,6 +2309,7 @@ class EllipseSet(FeatureSet):
         Returns:
             Ellipse: mean strain ellipse.
         """
+        from scipy import linalg as spla
         mean_log = np.mean([spla.logm(np.asarray(e)) for e in self], axis=0)
         return Ellipse(spla.expm(mean_log).real)
 
@@ -2572,6 +2576,7 @@ class EllipsoidSet(FeatureSet):
         Returns:
             Ellipsoid: mean strain ellipsoid.
         """
+        from scipy import linalg as spla
         mean_log = np.mean([spla.logm(np.asarray(e)) for e in self], axis=0)
         return Ellipsoid(spla.expm(mean_log).real)
 
@@ -2845,6 +2850,7 @@ class ClusterSet:
         Returns:
             None
         """
+        from scipy.cluster.hierarchy import fcluster
 
         self.maxclust = kwargs.get("maxclust", self.maxclust)
         self.angle = kwargs.get("angle", self.angle)
@@ -2866,6 +2872,7 @@ class ClusterSet:
         Returns:
             None
         """
+        from scipy.cluster.hierarchy import linkage
 
         self.method = kwargs.get("method", self.method)
         if issubclass(self.data.__feature_class__, (Axial2, Axial3)):
@@ -2875,6 +2882,7 @@ class ClusterSet:
 
     def dendrogram(self, **kwargs):
         """Show dendrogram."""
+        from scipy.cluster.hierarchy import dendrogram
 
         _fig, ax = plt.subplots(figsize=apsg_conf.figsize)
         dendrogram(self.Z, ax=ax, **kwargs)
@@ -2882,6 +2890,7 @@ class ClusterSet:
 
     def elbow(self, no_plot=False, n=None):
         """Plot within groups variance vs. number of clusters."""
+        from scipy.cluster.hierarchy import fcluster
 
         if n is None:
             idx = fcluster(self.Z, len(self.data), criterion="maxclust")

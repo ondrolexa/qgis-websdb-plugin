@@ -23,13 +23,14 @@ tracker=https://github.com/ondrolexa/qgis-websdb-plugin/issues/
 # QGIS context
 deprecated=False
 experimental=True
-plugin_dependencies=scipy
 qgisMinimumVersion=3.40
 qgisMaximumVersion=4.99
 
 # versioning
-version=1.0.5
+version=1.0.6
 changelog=
+ 1.0.6 2026-10-19
+ - scipy is no longer required
  1.0.2 2026-10-18
  - security bugs fixed
  1.0.1 2026-10-18

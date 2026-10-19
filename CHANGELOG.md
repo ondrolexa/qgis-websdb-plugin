@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.6 - 2026-10-19
+
+- scipy is no longer required. Vendored APSG imports it lazily, `Rotation3.from_axisangle`
+  and grid averaging's weighted rotation mean use NumPy only, and the misused
+  `plugin_dependencies=scipy` entry is removed from `metadata.txt`.
+
 ## 1.0.5 - 2026-10-18
 
 - Vendored APSG no longer ships `shell.py` (the `iapsg` interactive console), which the

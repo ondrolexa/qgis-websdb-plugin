@@ -1,13 +1,6 @@
 import math
 
 import numpy as np
-from scipy.optimize import minimize_scalar
-from scipy.special import gamma as gamma_fun
-from scipy.special import iv as modified_bessel_2ndkind
-from scipy.special import ivp as modified_bessel_2ndkind_derivative
-from scipy.stats import f as fdist
-from scipy.stats import norm as gauss
-from scipy.stats import uniform
 
 # Normalization constants keyed by (kappa, beta), shared by every ``KentDistribution``
 # (the series is expensive to evaluate); ``normalize*(cache=...)`` overrides them.
@@ -68,6 +61,7 @@ def vonMisesFisher(mu, kappa, num_samples):
 
 def estimate_k(features):
     # objective function to be minimized
+    from scipy.optimize import minimize_scalar
     def obj_fun(k):
         W = np.exp(
             k * (np.abs(np.dot(np.asarray(features), np.asarray(features).T)))
@@ -194,6 +188,8 @@ class KentDistribution:
         Returns:
             float: normalization constant of the Kent distribution.
         """
+        from scipy.special import gamma as gamma_fun
+        from scipy.special import iv as modified_bessel_2ndkind
 
         if cache is None:
             cache = _NORMALIZE_CACHE
@@ -334,6 +330,9 @@ class KentDistribution:
         Returns:
             ndarray: derivative of the normalization factor with respect to kappa and beta.
         """
+        from scipy.special import gamma as gamma_fun
+        from scipy.special import iv as modified_bessel_2ndkind
+        from scipy.special import ivp as modified_bessel_2ndkind_derivative
 
         if cache is None:
             cache = _NORMALIZE_PRIME_CACHE
@@ -443,6 +442,8 @@ class KentDistribution:
             return np.sum(retval, len(np.shape(retval)) - 1)
 
     def _rvs_helper(self):
+        from scipy.stats import norm as gauss
+        from scipy.stats import uniform
         num_samples = 10000
         xs = gauss(0, 1).rvs((num_samples, 3))
         xs = np.divide(xs, np.reshape(np.linalg.norm(xs, axis=1), (num_samples, 1)))
@@ -507,6 +508,7 @@ def jelinek_statistics(tensors, level=0.95, normalize=False, anisoft=False):
         ``n``, ``level``, ``normalize`` and ``anisoft``. Index in ``ellipses`` is the
         principal axis of the mean tensor (0 is the largest eigenvalue).
     """
+    from scipy.stats import f as fdist
     tensors = np.asarray(tensors, dtype=float)
     n = len(tensors)
     if n < 3:

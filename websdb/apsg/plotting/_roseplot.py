@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import circmean, vonmises
 
 from apsg.config import apsg_conf
 from apsg.feature import feature_from_json
@@ -281,6 +280,7 @@ class RosePlot:
             bottom = bottom + num
 
     def _pdf(self, *args, **kwargs):
+        from scipy.stats import vonmises
         bottom = np.zeros_like(self._kwargs["pdf_res"])
         legend = kwargs.pop("legend")
         theta = np.linspace(-np.pi, np.pi, self._kwargs["pdf_res"])
@@ -319,6 +319,8 @@ class RosePlot:
             bottom = bottom + radii
 
     def _muci(self, *args, **kwargs):
+        from scipy.stats import circmean
+        from scipy.stats import vonmises
         conflevel = kwargs.pop("confidence_level")
         n_resamples = kwargs.pop("n_resamples")
         for arg in args:
