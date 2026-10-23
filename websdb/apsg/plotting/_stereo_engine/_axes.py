@@ -662,8 +662,13 @@ class StereonetAxes(Axes):
     # -- matplotlib custom-projection machinery --------------------------
 
     def _init_axis(self):
-        self.xaxis = maxis.XAxis(self, clear=False)
-        self.yaxis = maxis.YAxis(self, clear=False)
+        # ``clear`` is matplotlib >= 3.8 only; older Axis.__init__ always clears
+        try:
+            self.xaxis = maxis.XAxis(self, clear=False)
+            self.yaxis = maxis.YAxis(self, clear=False)
+        except TypeError:
+            self.xaxis = maxis.XAxis(self)
+            self.yaxis = maxis.YAxis(self)
         self.spines["geo"].register_axis(self.yaxis)
 
     def clear(self):
@@ -1226,7 +1231,11 @@ class StereonetAxes(Axes):
         cs = contour_fn(
             self, Xg, Yg, Vg, levels=levels, transform=self.transAxes, **kwargs
         )
-        cs.set_clip_path(self.patch)
+        if hasattr(cs, "set_clip_path"):
+            cs.set_clip_path(self.patch)
+        else:  # matplotlib < 3.8: ContourSet is not an Artist
+            for collection in cs.collections:
+                collection.set_clip_path(self.patch)
 
         if show_data and features is not None:
             self.point(features, **(data_kws or {}))

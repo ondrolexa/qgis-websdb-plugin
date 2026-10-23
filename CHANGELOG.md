@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 -->
 
+## 1.0.7 - 2026-10-23
+
+- Stereonet plotting and contours work with matplotlib older than 3.8 (e.g. 3.6.3 shipped by
+  Linux distributions): vendored APSG no longer passes `clear=False` to the axis constructors
+  and clips the contour set's collections when `ContourSet` is not an Artist.
+- Upgrading or reloading the plugin no longer keeps the old vendored `apsg`/`geomag` in memory
+  until QGIS is restarted: `unload()` drops them from `sys.modules` and `sys.path`.
+
 ## 1.0.6 - 2026-10-19
 
 - scipy is no longer required. Vendored APSG imports it lazily, `Rotation3.from_axisangle`

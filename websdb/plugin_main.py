@@ -70,6 +70,7 @@ from websdb.grid_average import (  # noqa: E402
 )
 from websdb.toolbelt import PlgLogger  # noqa: E402
 from websdb.toolbelt.api_client import ApiClient  # noqa: E402
+from websdb.vendored import unload_vendored_packages  # noqa: E402
 
 # Import the code for the dialog
 from .websdb_average import WebSDBAverageDialog  # noqa: E402
@@ -470,6 +471,8 @@ class WebSDBPlugin:
         if svg_paths and websdb_svg_path in svg_paths:
             svg_paths.remove(websdb_svg_path)
             QgsSettings().setValue("svg/searchPathsForSVG", svg_paths)
+        # so a plugin upgrade/reload imports the new apsg/geomag, not the cached old ones
+        unload_vendored_packages()
 
     def calc_gc(self, point=None):
         """Calculate Grid convergence for project CRS"""

@@ -27,8 +27,11 @@ qgisMinimumVersion=3.40
 qgisMaximumVersion=4.99
 
 # versioning
-version=1.0.6
+version=1.0.7
 changelog=
+ 1.0.7 2026-10-23
+ - Stereonet contours work with matplotlib older than 3.8
+ - Plugin upgrade no longer keeps the old APSG loaded until QGIS restart
  1.0.6 2026-10-19
  - scipy is no longer required
  1.0.2 2026-10-18
